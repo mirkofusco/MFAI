@@ -13,7 +13,11 @@ app = FastAPI(title=f"{APP_NAME}")
 templates = Jinja2Templates(directory="app/templates")
 
 # CORS (per ora aperti, poi li chiudiamo ai tuoi domini)
-ALLOWED_ORIGINS = ["*"]
+ALLOWED_ORIGINS = [
+    "https://mid-ranna-soluzionidigitaliroma-f8d1ef2a.koyeb.app",
+    "https://api.soluzionidigitali.roma.it",  # quando colleghi il dominio
+]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
