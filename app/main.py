@@ -1,16 +1,22 @@
+from pathlib import Path
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-app = FastAPI(title="MF.AI")
+APP_NAME = "MF.AI"
 
+app = FastAPI(title=f"{APP_NAME}")
+
+# Templates (HTML)
 templates = Jinja2Templates(directory="app/templates")
 
+# CORS (per ora aperti, poi li chiudiamo ai tuoi domini)
+ALLOWED_ORIGINS = ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # chiudiamo dopo
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -18,29 +24,29 @@ app.add_middleware(
 
 @app.get("/")
 def home():
-    return {"ok": True, "app": "MF.AI"}
+    return {"ok": True, "app": APP_NAME}
 
 @app.get("/health")
 def health():
     return {"ok": True}
 
 @app.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request):
+def login_page(request: Request):
     return templates.TemplateResponse("login.html", {"request": request})
 
 class TokenData(BaseModel):
-    token: str
+    token: str = Field(..., min_length=1)
 
 @app.post("/token")
-async def receive_token(data: TokenData):
-    return JSONResponse(content={"message": "Token ricevuto correttamente."})
+def receive_token(data: TokenData):
+    return {"message": "Token ricevuto correttamente."}
+
+TOKEN_FILE = Path("access_token.txt")
 
 @app.post("/save-token")
-async def save_token(request: Request):
-    body = await request.json()
-    token = body.get("token")
-    if not token:
-        raise HTTPException(status_code=400, detail="Token mancante")
-    with open("access_token.txt", "w") as f:
-        f.write(token)
-    return JSONResponse(content={"status": "success"})
+def save_token(data: TokenData):
+    try:
+        TOKEN_FILE.write_text(data.token, encoding="utf-8")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Errore salvataggio token") from e
+    return {"status": "success"}
