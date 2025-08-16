@@ -1,64 +1,11 @@
-<!DOCTYPE html>
-<html lang="it">
-<head>
-  <meta charset="UTF-8" />
-  <title>Login con Facebook</title>
-</head>
-<body>
-  <h2>Login con Facebook</h2>
-
-  <!-- Bottone che funziona -->
-  <button onclick="loginWithFacebook()">Login</button>
-
-  <script>
-    window.fbAsyncInit = function () {
-      FB.init({
-        appId: '1037504908461451',  // ← metti qui l'ID della tua app Meta
-        cookie: true,
-        xfbml: true,
-        version: 'v21.0'
-      });
-
-      FB.AppEvents.logPageView();
-    };
-
-    function loginWithFacebook() {
-      FB.login(function (response) {
-        if (response.authResponse) {
-          const token = response.authResponse.accessToken;
-
-          fetch("/save-token", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify({ token: token })
-          })
-          .then(res => res.json())
-          .then(data => {
-            alert("Token salvato nel backend!");
-            console.log(data);
-          })
-          .catch(err => {
-            alert("Errore nel salvataggio token.");
-            console.error(err);
-          });
-
-        } else {
-          alert("Login annullato.");
-        }
-      }, {
-        scope: "public_profile,email,pages_show_list,instagram_basic,instagram_manage_messages"
-      });
-    }
-
-    (function (d, s, id) {
-      var js, fjs = d.getElementsByTagName(s)[0];
-      if (d.getElementById(id)) return;
-      js = d.createElement(s); js.id = id;
-      js.src = "https://connect.facebook.net/en_US/sdk.js";
-      fjs.parentNode.insertBefore(js, fjs);
-    }(document, 'script', 'facebook-jssdk'));
-  </script>
-</body>
+cat > app/templates/login.html << 'EOF'
+<!doctype html>
+<html>
+  <head><meta charset="utf-8"><title>MF.AI Login</title></head>
+  <body>
+    <h1>MF.AI</h1>
+    <p>Pagina di login pronta.</p>
+    <button onclick="alert('Qui metteremo il Facebook Login')">Accedi</button>
+  </body>
 </html>
+EOF
