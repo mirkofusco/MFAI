@@ -4,3 +4,7 @@ __pycache__/
 .env
 access_token.txt
 
+.env
+.venv*
+__pycache__/
+*.pyc
