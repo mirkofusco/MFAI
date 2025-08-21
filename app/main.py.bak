@@ -1,4 +1,3 @@
-from app.routers.meta_webhook import router as meta_webhook_router
 # app/main.py
 # ============================================================
 # MF.AI - FastAPI
@@ -47,8 +46,6 @@ async def require_api_key(key: str | None = Depends(api_key_header)):
 # ----------------------------
 APP_NAME = "MF.AI"
 app = FastAPI(title=APP_NAME)
-
-app.include_router(meta_webhook_router)
 
 # Templates (HTML)
 templates = Jinja2Templates(directory="app/templates")
