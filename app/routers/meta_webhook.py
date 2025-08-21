@@ -5,7 +5,7 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy import text as sql_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# useremo la sessione standard creata al punto 2
+# usa la sessione standard
 from app.db_session import async_session_maker
 
 router = APIRouter()
@@ -47,26 +47,24 @@ async def webhook(request: Request):
                 for msg in value.get("messages", []):
                     ts_ms = msg.get("timestamp")
                     ts = datetime.fromtimestamp(int(ts_ms)/1000, tz=timezone.utc) if ts_ms else None
+                    text_body = (msg.get("text") or {}).get("body")
                     events.append({
                         "ts": ts,
-                        "sender_id": msg.get("from"),
-                        "recipient_id": ig_business_id,
-                        "text": (msg.get("text") or {}).get("body"),
+                        "payload_text": text_body,
                         "raw_json": value
                     })
 
     async with async_session_maker() as session:  # type: AsyncSession
         for e in events:
+            payload_text = e["payload_text"] or json.dumps(e["raw_json"], ensure_ascii=False)
             await session.execute(
                 sql_text("""
-                    INSERT INTO mfai_app.message_logs (ts, sender_id, recipient_id, text, raw_json)
-                    VALUES (:ts, :sender_id, :recipient_id, :text, CAST(:raw_json AS JSONB))
+                    INSERT INTO mfai_app.message_logs (ts, direction, payload, raw_json)
+                    VALUES (:ts, 'in', :payload, CAST(:raw_json AS JSONB))
                 """),
                 {
                     "ts": e["ts"],
-                    "sender_id": e["sender_id"],
-                    "recipient_id": e["recipient_id"],
-                    "text": e["text"],
+                    "payload": payload_text,
                     "raw_json": json.dumps(e["raw_json"]),
                 }
             )
