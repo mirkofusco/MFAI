@@ -74,7 +74,8 @@ async def meta_webhook(request: Request):
     sig = request.headers.get("x-hub-signature-256") or request.headers.get("X-Hub-Signature-256")
     if not _valid_sig(sig, raw):
         # in produzione potresti usare 401; in dev non bloccare
-        return JSONResponse({"status": "invalid_signature"}, 200)
+        raise HTTPException(status_code=401, detail="Invalid signature")
+
 
     text = raw.decode("utf-8", errors="ignore")
     try:
