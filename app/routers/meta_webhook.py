@@ -49,58 +49,42 @@ async def meta_webhook(request: Request):
         ig_account_id = await _get_ig_account_id(ig_user_id)
 
         for evt in messaging_list:
-            # --- riconosci i vari tipi di evento ---
-            message   = evt.get("message")
-            delivery  = evt.get("delivery")
-            read      = evt.get("read")
-            reaction  = evt.get("reaction")
-            postback  = evt.get("postback")
-            standby   = evt.get("standby")
+            sender = (evt.get("sender") or {})
+            recipient = (evt.get("recipient") or {})
+            message = evt.get("message")
 
-            sender_id = str((evt.get("sender") or {}).get("id") or "")
-            recipient_id = str((evt.get("recipient") or {}).get("id") or "")
+            sender_id = str(sender.get("id") or "")
+            recipient_id = str(recipient.get("id") or "")
 
-            # Log IN (best effort)
+            # Log IN (best-effort)
             try:
                 await _log_message(ig_account_id, "in", evt)
             except Exception as e:
                 logger.warning("DB log(in) failed: %s", e)
 
-            # --- ANTI-LOOP GUARDS ---
-            # 1) ignora eventi non di messaggio (delivery/read/reaction/standby)
-            if delivery or read or reaction or standby:
+            # --- PROCESSA SOLO MESSAGGI DI TESTO NON-ECHO ---
+            if not isinstance(message, dict):
                 continue
-
-            # 2) se non c'è message, non rispondere
-            if not message:
+            if message.get("is_echo"):
                 continue
-
-            # 3) ignora echo dei nostri messaggi (Facebook/IG usa is_echo)
-            if isinstance(message, dict) and message.get("is_echo"):
-                continue
-
-            # 4) ignora messaggi senza testo (es. solo media) per evitare risposte generiche
-            text_msg = message.get("text") if isinstance(message, dict) else None
+            text_msg = message.get("text")
             if not isinstance(text_msg, str) or not text_msg.strip():
                 continue
 
-            # 5) ulteriore protezione: se per qualsiasi motivo l'ID mittente coincide con l'IG business, salta
+            # ulteriore protezione (non dovrebbe servire su IG)
             if sender_id == ig_user_id:
                 continue
 
-            # --- prepara risposta SOLO per messaggi di testo umani ---
-            reply_text = _build_reply(text_msg, postback)
+            reply_text = _build_reply(text_msg)
 
-            # recupera Page Token attivo
             page_token = await _get_active_page_token(ig_user_id)
             if not page_token:
                 logger.warning("No active PAGE TOKEN for IG %s", ig_user_id)
                 continue
 
-            # invia via /me/messages (quella che funziona nel tuo setup)
             ok, resp = await _send_dm_via_me(page_token, sender_id, reply_text)
 
-            # log OUT (best effort)
+            # Log OUT (best-effort)
             try:
                 out_payload = {"request": {"to": sender_id, "text": reply_text}, "response": resp}
                 await _log_message(ig_account_id, "out", out_payload)
@@ -142,8 +126,8 @@ async def _log_message(ig_account_id: int | None, direction: str, payload: Any):
             "payload": json.dumps(payload, ensure_ascii=False)
         })
 
-def _build_reply(text_msg: str | None, postback: Dict[str, Any] | None) -> str:
-    t = (text_msg or "").strip()
+def _build_reply(text_msg: str) -> str:
+    t = text_msg.strip()
     if t.lower() in {"ping", "ping777", "test"}:
         return "pong ✅"
     if len(t) > 240:
