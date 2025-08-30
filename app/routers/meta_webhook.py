@@ -13,7 +13,7 @@ router = APIRouter()
 
 VERIFY_TOKEN = os.environ.get("META_VERIFY_TOKEN", "changeme")
 APP_SECRET   = os.environ.get("META_APP_SECRET", "")
-GRAPH_VER    = os.environ.get("META_GRAPH_VERSION", "v23.0")  # default aggiornato
+GRAPH_VER    = os.environ.get("META_GRAPH_VERSION", "v23.0")  # restiamo su v23.0
 
 @router.get("/webhook/meta")
 async def meta_verify(request: Request):
@@ -23,7 +23,8 @@ async def meta_verify(request: Request):
     raise HTTPException(status_code=403, detail="Verification failed")
 
 def _valid_sig(sig_header: str | None, body: bytes) -> bool:
-    if not APP_SECRET:  # in dev non bloccare
+    # In dev: se non c'è APP_SECRET non bloccare
+    if not APP_SECRET:
         return True
     if not sig_header or not sig_header.startswith("sha256="):
         return False
@@ -32,7 +33,7 @@ def _valid_sig(sig_header: str | None, body: bytes) -> bool:
     return hmac.compare_digest(received, expected)
 
 async def _get_active_token(session: AsyncSession, ig_user_id: str) -> str | None:
-    # prova più nomi di colonna senza far fallire l'endpoint
+    # Prova più nomi colonna senza far fallire l’endpoint
     for col in ("token", "access_token", "value"):
         q = f"""
         SELECT {col}
@@ -52,7 +53,10 @@ async def _get_active_token(session: AsyncSession, ig_user_id: str) -> str | Non
     return None
 
 async def _send_ig_text(ig_user_id: str, recipient_id: str, text_body: str, token: str) -> dict:
-    # Send API Instagram: POST /{IG_USER_ID}/messages
+    """
+    Instagram Messaging: POST /{IG_USER_ID}/messages
+    Inviamo JSON; se mai servisse, esiste anche la variante form-data.
+    """
     url = f"https://graph.facebook.com/{GRAPH_VER}/{ig_user_id}/messages"
     payload = {
         "recipient": {"id": recipient_id},
@@ -76,7 +80,6 @@ async def meta_webhook(request: Request):
         # in produzione potresti usare 401; in dev non bloccare
         raise HTTPException(status_code=401, detail="Invalid signature")
 
-
     text = raw.decode("utf-8", errors="ignore")
     try:
         payload = json.loads(text)
@@ -84,7 +87,12 @@ async def meta_webhook(request: Request):
         logging.warning("Webhook non-JSON, body=%s", text[:500])
         return JSONResponse({"status": "ignored_non_json"}, 200)
 
+    # log compatto + log completo IG
     logging.info("WEBHOOK EVENT: %s", text[:1000])
+    try:
+        print("[IG_WEBHOOK]", json.dumps(payload, ensure_ascii=False), flush=True)
+    except Exception:
+        pass
 
     events: list[dict] = []
 
@@ -110,19 +118,26 @@ async def meta_webhook(request: Request):
 
     # B) Formato Instagram Messaging “entry/changes/...”
     for e in (payload.get("entry") or []):
-        ig_user_id = e.get("id") or ""  # IG business destinatario
+        ig_user_id = e.get("id") or ""  # IG business destinatario (es. 1784...)
         for ch in (e.get("changes") or []):
             val = ch.get("value") or {}
-            if val.get("messaging_product") == "instagram":
+            # Alcuni payload IG includono messaging_product
+            if val.get("messaging_product") in (None, "instagram"):
                 for m in (val.get("messages") or []):
                     ts_ms     = m.get("timestamp")
                     ts        = datetime.fromtimestamp(int(ts_ms)/1000, tz=timezone.utc) if ts_ms else datetime.now(timezone.utc)
-                    sender_id = m.get("from")
+                    # <<< FIX: estraiamo l'ID stringa del mittente IG >>>
+                    sender_id = (m.get("from") or {}).get("id")
+                    # testo: se object, usa 'body'; se stringa, usa così com’è
                     text_obj  = m.get("text")
                     msg_text  = text_obj.get("body") if isinstance(text_obj, dict) else text_obj
                     events.append({
-                        "ts": ts, "ig_user_id": ig_user_id, "sender_id": sender_id,
-                        "text": msg_text, "raw": val, "test_event": False
+                        "ts": ts,
+                        "ig_user_id": ig_user_id,
+                        "sender_id": sender_id,
+                        "text": msg_text,
+                        "raw": val,
+                        "test_event": False
                     })
 
         # C) Fallback “entry/messaging” stile Messenger
@@ -131,8 +146,12 @@ async def meta_webhook(request: Request):
             msg       = m.get("message") or {}
             msg_text  = msg.get("text")
             events.append({
-                "ts": datetime.now(timezone.utc), "ig_user_id": ig_user_id,
-                "sender_id": sender_id, "text": msg_text, "raw": m, "test_event": False
+                "ts": datetime.now(timezone.utc),
+                "ig_user_id": ig_user_id,
+                "sender_id": sender_id,
+                "text": msg_text,
+                "raw": m,
+                "test_event": False
             })
 
     if not events:
@@ -140,7 +159,7 @@ async def meta_webhook(request: Request):
 
     async with async_session_maker() as session:  # type: AsyncSession
         for ev in events:
-            # log IN
+            # log IN (testo se presente, altrimenti raw)
             payload_text = ev["text"] or json.dumps(ev["raw"], ensure_ascii=False)
             await session.execute(
                 sql_text("""
@@ -150,7 +169,7 @@ async def meta_webhook(request: Request):
                 {"ts": ev["ts"], "payload": payload_text, "raw_json": json.dumps(ev["raw"])}
             )
 
-            # invio risposta: solo per eventi reali e IG id valido
+            # invio risposta: solo per eventi reali con sender e IG id valido
             out_resp = {"ok": False, "status": 0, "data": {"info": "skipped"}}
             out_payload = "skipped"
 
@@ -178,4 +197,3 @@ async def meta_webhook(request: Request):
         await session.commit()
 
     return {"status": "ok", "received": len(events)}
-
