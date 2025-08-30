@@ -2,7 +2,7 @@
 import os
 import json
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import PlainTextResponse, JSONResponse
@@ -16,7 +16,7 @@ logger.setLevel(logging.INFO)
 
 router = APIRouter()
 
-# Verifica webhook (GET)
+# ------------------ VERIFY ------------------
 @router.get("/webhook/meta")
 async def meta_verify(request: Request):
     mode = request.query_params.get("hub.mode")
@@ -24,12 +24,11 @@ async def meta_verify(request: Request):
     challenge = request.query_params.get("hub.challenge")
 
     VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "mfai_meta_verify")
-
     if mode == "subscribe" and token == VERIFY_TOKEN and challenge:
         return PlainTextResponse(challenge)
     raise HTTPException(status_code=403, detail="Forbidden")
 
-# Ricezione eventi (POST)
+# ------------------ RECEIVER ------------------
 @router.post("/webhook/meta")
 async def meta_webhook(request: Request):
     try:
@@ -37,66 +36,82 @@ async def meta_webhook(request: Request):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    # Log grezzo a console
     logger.info("[IG_WEBHOOK] %s", json.dumps(body, ensure_ascii=False))
 
     if body.get("object") != "instagram":
         return JSONResponse({"status": "ignored"}, status_code=200)
 
-    # Ogni entry = un batch di eventi per un IG business
     entries: List[Dict[str, Any]] = body.get("entry", [])
     for entry in entries:
         ig_user_id = str(entry.get("id") or "")  # es. 1784...
         messaging_list = entry.get("messaging", [])
 
-        # Prendi ig_account_id (può servire per i log DB)
         ig_account_id = await _get_ig_account_id(ig_user_id)
 
         for evt in messaging_list:
-            sender = evt.get("sender", {}) or {}
-            recipient = evt.get("recipient", {}) or {}
-            msg = evt.get("message", {}) or {}
-            postback = evt.get("postback", {}) or {}
+            # --- riconosci i vari tipi di evento ---
+            message   = evt.get("message")
+            delivery  = evt.get("delivery")
+            read      = evt.get("read")
+            reaction  = evt.get("reaction")
+            postback  = evt.get("postback")
+            standby   = evt.get("standby")
 
-            sender_id = str(sender.get("id") or "")
-            recipient_id = str(recipient.get("id") or "")
-            text_msg = msg.get("text")
+            sender_id = str((evt.get("sender") or {}).get("id") or "")
+            recipient_id = str((evt.get("recipient") or {}).get("id") or "")
 
-            # Log evento IN in DB (non bloccare il flusso se fallisce)
+            # Log IN (best effort)
             try:
                 await _log_message(ig_account_id, "in", evt)
             except Exception as e:
                 logger.warning("DB log(in) failed: %s", e)
 
-            # Evita loop se mai arrivassero eco di messaggi della pagina
+            # --- ANTI-LOOP GUARDS ---
+            # 1) ignora eventi non di messaggio (delivery/read/reaction/standby)
+            if delivery or read or reaction or standby:
+                continue
+
+            # 2) se non c'è message, non rispondere
+            if not message:
+                continue
+
+            # 3) ignora echo dei nostri messaggi (Facebook/IG usa is_echo)
+            if isinstance(message, dict) and message.get("is_echo"):
+                continue
+
+            # 4) ignora messaggi senza testo (es. solo media) per evitare risposte generiche
+            text_msg = message.get("text") if isinstance(message, dict) else None
+            if not isinstance(text_msg, str) or not text_msg.strip():
+                continue
+
+            # 5) ulteriore protezione: se per qualsiasi motivo l'ID mittente coincide con l'IG business, salta
             if sender_id == ig_user_id:
                 continue
 
-            # Recupera Page Token attivo per questo IG business
-            page_token = await _get_active_page_token(ig_user_id)
-            if not page_token:
-                logger.warning("Nessun PAGE TOKEN attivo per IG %s", ig_user_id)
-                continue
-
-            # Semplice logica di risposta
+            # --- prepara risposta SOLO per messaggi di testo umani ---
             reply_text = _build_reply(text_msg, postback)
 
-            # Invio risposta via /me/messages (questo endpoint ti ha già funzionato)
-            ok, resp_json = await _send_dm_via_me(page_token, sender_id, reply_text)
+            # recupera Page Token attivo
+            page_token = await _get_active_page_token(ig_user_id)
+            if not page_token:
+                logger.warning("No active PAGE TOKEN for IG %s", ig_user_id)
+                continue
 
-            # Log OUT
+            # invia via /me/messages (quella che funziona nel tuo setup)
+            ok, resp = await _send_dm_via_me(page_token, sender_id, reply_text)
+
+            # log OUT (best effort)
             try:
-                out_payload = {"request": {"to": sender_id, "text": reply_text}, "response": resp_json}
+                out_payload = {"request": {"to": sender_id, "text": reply_text}, "response": resp}
                 await _log_message(ig_account_id, "out", out_payload)
             except Exception as e:
                 logger.warning("DB log(out) failed: %s", e)
 
-            logger.info("Send result ok=%s resp=%s", ok, resp_json)
+            logger.info("Send result ok=%s resp=%s", ok, resp)
 
     return JSONResponse({"status": "ok"})
 
-# ---------- Helpers ----------
-
+# ------------------ HELPERS ------------------
 async def _get_ig_account_id(ig_user_id: str) -> int | None:
     q = text("SELECT id FROM mfai_app.instagram_accounts WHERE ig_user_id = :ig LIMIT 1")
     async with engine.connect() as conn:
@@ -127,19 +142,15 @@ async def _log_message(ig_account_id: int | None, direction: str, payload: Any):
             "payload": json.dumps(payload, ensure_ascii=False)
         })
 
-def _build_reply(text_msg: str | None, postback: Dict[str, Any]) -> str:
-    if text_msg:
-        t = text_msg.strip()
-        if t.lower() in {"ping", "ping777", "test"}:
-            return "pong ✅"
-        if len(t) > 240:
-            t = t[:240] + "…"
-        return f"MF.AI: ho ricevuto “{t}”"
-    if postback:
-        return "MF.AI: postback ricevuto ✅"
-    return "MF.AI: ciao! 👋"
+def _build_reply(text_msg: str | None, postback: Dict[str, Any] | None) -> str:
+    t = (text_msg or "").strip()
+    if t.lower() in {"ping", "ping777", "test"}:
+        return "pong ✅"
+    if len(t) > 240:
+        t = t[:240] + "…"
+    return f"MF.AI: ho ricevuto “{t}”"
 
-async def _send_dm_via_me(page_token: str, recipient_id: str, text: str) -> tuple[bool, Dict[str, Any]]:
+async def _send_dm_via_me(page_token: str, recipient_id: str, text: str) -> Tuple[bool, Dict[str, Any]]:
     url = "https://graph.facebook.com/v20.0/me/messages"
     params = {"access_token": page_token}
     payload = {
