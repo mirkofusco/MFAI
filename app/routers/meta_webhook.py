@@ -16,19 +16,29 @@ logger.setLevel(logging.INFO)
 
 router = APIRouter()
 
-# ------------------ VERIFY ------------------
+# ------------------------------------------------------------------
+# Config ENV
+# ------------------------------------------------------------------
+VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "mfai_meta_verify")
+FB_PAGE_ID = os.getenv("FB_PAGE_ID", "701660883039128")  # <-- metti anche su Koyeb
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# ------------------------------------------------------------------
+# VERIFY
+# ------------------------------------------------------------------
 @router.get("/webhook/meta")
 async def meta_verify(request: Request):
     mode = request.query_params.get("hub.mode")
     token = request.query_params.get("hub.verify_token")
     challenge = request.query_params.get("hub.challenge")
 
-    VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "mfai_meta_verify")
     if mode == "subscribe" and token == VERIFY_TOKEN and challenge:
         return PlainTextResponse(challenge)
     raise HTTPException(status_code=403, detail="Forbidden")
 
-# ------------------ RECEIVER ------------------
+# ------------------------------------------------------------------
+# RECEIVER
+# ------------------------------------------------------------------
 @router.post("/webhook/meta")
 async def meta_webhook(request: Request):
     try:
@@ -44,7 +54,7 @@ async def meta_webhook(request: Request):
     entries: List[Dict[str, Any]] = body.get("entry", [])
     for entry in entries:
         ig_user_id = str(entry.get("id") or "")  # es. 1784...
-        messaging_list = entry.get("messaging", [])
+        messaging_list = entry.get("messaging", []) or []
 
         ig_account_id = await _get_ig_account_id(ig_user_id)
 
@@ -62,7 +72,7 @@ async def meta_webhook(request: Request):
             except Exception as e:
                 logger.warning("DB log(in) failed: %s", e)
 
-            # --- PROCESSA SOLO MESSAGGI DI TESTO NON-ECHO ---
+            # --- SOLO messaggi di testo non-echo ---
             if not isinstance(message, dict):
                 continue
             if message.get("is_echo"):
@@ -70,19 +80,31 @@ async def meta_webhook(request: Request):
             text_msg = message.get("text")
             if not isinstance(text_msg, str) or not text_msg.strip():
                 continue
-
-            # ulteriore protezione (non dovrebbe servire su IG)
             if sender_id == ig_user_id:
                 continue
 
-            reply_text = _build_reply(text_msg)
+            # --- Reply (AI con fallback) ---
+            try:
+                reply_text = await ai_reply(text_msg)
+            except Exception as e:
+                logger.error("AI error: %s", e)
+                reply_text = _fallback_reply(text_msg)
 
+            # --- Page Token attivo ---
             page_token = await _get_active_page_token(ig_user_id)
             if not page_token:
                 logger.warning("No active PAGE TOKEN for IG %s", ig_user_id)
                 continue
 
+            # --- Invio via /me/messages ---
             ok, resp = await _send_dm_via_me(page_token, sender_id, reply_text)
+
+            # --- AUTO TAKEOVER + RETRY UNA VOLTA ---
+            if (not ok) and _needs_takeover(resp):
+                took = await _take_thread_control(page_token, FB_PAGE_ID, sender_id)
+                logger.info("take_thread_control took=%s", took)
+                if took:
+                    ok, resp = await _send_dm_via_me(page_token, sender_id, reply_text)
 
             # Log OUT (best-effort)
             try:
@@ -95,7 +117,56 @@ async def meta_webhook(request: Request):
 
     return JSONResponse({"status": "ok"})
 
-# ------------------ HELPERS ------------------
+# ------------------------------------------------------------------
+# AI + FALLBACK
+# ------------------------------------------------------------------
+def _fallback_reply(text_msg: str) -> str:
+    t = (text_msg or "").strip()
+    if t.lower() in {"ping", "ping777", "test"}:
+        return "pong ✅"
+    if len(t) > 240:
+        t = t[:240] + "…"
+    return f"MF.AI: ho ricevuto “{t}”"
+
+async def ai_reply(user_text: str) -> str:
+    # Se non hai messo la chiave -> fallback
+    if not OPENAI_API_KEY:
+        logger.warning("OPENAI_API_KEY assente: uso fallback")
+        return _fallback_reply(user_text)
+
+    sys = ("Sei l’assistente MF.AI. Rispondi in italiano, tono amichevole, breve e utile. "
+           "Se manca contesto, fai UNA sola domanda chiarificatrice.")
+    payload = {
+        "model": "gpt-4o-mini",  # scegli il tuo modello
+        "messages": [
+            {"role": "system", "content": sys},
+            {"role": "user", "content": user_text}
+        ],
+        "temperature": 0.7,
+        "max_tokens": 200
+    }
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    timeout = httpx.Timeout(12.0, connect=6.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        r = await client.post("https://api.openai.com/v1/chat/completions",
+                              headers=headers, json=payload)
+        if r.status_code != 200:
+            logger.error("OpenAI HTTP %s: %s", r.status_code, r.text)
+            return _fallback_reply(user_text)
+        j = r.json()
+        try:
+            txt = (j["choices"][0]["message"]["content"]).strip()
+            return txt or _fallback_reply(user_text)
+        except Exception as e:
+            logger.error("OpenAI parse error: %s | payload=%s", e, j)
+            return _fallback_reply(user_text)
+
+# ------------------------------------------------------------------
+# HELPERS
+# ------------------------------------------------------------------
 async def _get_ig_account_id(ig_user_id: str) -> int | None:
     q = text("SELECT id FROM mfai_app.instagram_accounts WHERE ig_user_id = :ig LIMIT 1")
     async with engine.connect() as conn:
@@ -126,13 +197,25 @@ async def _log_message(ig_account_id: int | None, direction: str, payload: Any):
             "payload": json.dumps(payload, ensure_ascii=False)
         })
 
-def _build_reply(text_msg: str) -> str:
-    t = text_msg.strip()
-    if t.lower() in {"ping", "ping777", "test"}:
-        return "pong ✅"
-    if len(t) > 240:
-        t = t[:240] + "…"
-    return f"MF.AI: ho ricevuto “{t}”"
+def _needs_takeover(resp: Dict[str, Any]) -> bool:
+    try:
+        err = resp.get("error", {})
+        return err.get("code") == 100 and err.get("error_subcode") == 2534037
+    except Exception:
+        return False
+
+async def _take_thread_control(page_token: str, page_id: str, recipient_id: str) -> bool:
+    url = f"https://graph.facebook.com/v20.0/{page_id}/take_thread_control"
+    params = {"access_token": page_token}
+    payload = {"recipient": {"id": recipient_id}, "metadata": "mf.ai auto-take"}
+    timeout = httpx.Timeout(12.0, connect=6.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        r = await client.post(url, params=params, json=payload)
+        try:
+            j = r.json() if r.headers.get("content-type","").startswith("application/json") else {}
+        except Exception:
+            j = {}
+        return r.status_code == 200 and j.get("success") is True
 
 async def _send_dm_via_me(page_token: str, recipient_id: str, text: str) -> Tuple[bool, Dict[str, Any]]:
     url = "https://graph.facebook.com/v20.0/me/messages"
