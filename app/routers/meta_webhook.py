@@ -2,6 +2,7 @@
 import os
 import json
 import logging
+from time import time
 from typing import Any, Dict, List, Tuple
 
 from fastapi import APIRouter, Request, HTTPException
@@ -17,11 +18,57 @@ logger.setLevel(logging.INFO)
 router = APIRouter()
 
 # ------------------------------------------------------------------
-# Config ENV
+# ENV / CONFIG
 # ------------------------------------------------------------------
-VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "mfai_meta_verify")
-FB_PAGE_ID = os.getenv("FB_PAGE_ID", "701660883039128")  # <-- metti anche su Koyeb
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+VERIFY_TOKEN      = os.getenv("META_VERIFY_TOKEN", "mfai_meta_verify")
+FB_PAGE_ID        = os.getenv("FB_PAGE_ID", "701660883039128")
+OPENAI_API_KEY    = os.getenv("OPENAI_API_KEY")
+INBOX_APP_ID      = 263902037430900  # Facebook Page Inbox
+RESPECT_HUMAN     = os.getenv("RESPECT_HUMAN", "true").lower() == "true"
+HUMAN_TTL_SEC     = int(os.getenv("HUMAN_TTL_SEC", "900"))  # 15 minuti default
+
+# ---- Conversational memory (in-RAM) ----
+# key = f"{ig_user_id}:{user_id}", value = list of {"role":"user/assistant","content": "..."}
+_SESS: Dict[str, List[Dict[str, str]]] = {}
+_SESS_TTL_SEC = int(os.getenv("SESSION_TTL_SEC", "3600"))  # reset dopo 1h inattività
+_SESS_LAST_AT: Dict[str, float] = {}
+
+def _skey(ig_user_id: str, user_id: str) -> str:
+    return f"{ig_user_id}:{user_id}"
+
+def _sess_get(ig_user_id: str, user_id: str) -> List[Dict[str, str]]:
+    key = _skey(ig_user_id, user_id)
+    if _SESS_LAST_AT.get(key, 0) + _SESS_TTL_SEC < time():
+        _SESS.pop(key, None)
+    _SESS_LAST_AT[key] = time()
+    return _SESS.setdefault(key, [])
+
+def _sess_add(ig_user_id: str, user_id: str, role: str, content: str, cap: int = 12):
+    s = _sess_get(ig_user_id, user_id)
+    s.append({"role": role, "content": content})
+    if len(s) > cap:
+        del s[: len(s) - cap]
+    _SESS_LAST_AT[_skey(ig_user_id, user_id)] = time()
+
+def _sess_clear(ig_user_id: str, user_id: str):
+    key = _skey(ig_user_id, user_id)
+    _SESS.pop(key, None)
+    _SESS_LAST_AT.pop(key, None)
+
+# Stato in-memory per "umano attivo" per thread (chiave = f"{ig_user_id}:{user_id}")
+_HUMAN_UNTIL: Dict[str, float] = {}
+
+def _key(ig_user_id: str, user_id: str) -> str:
+    return f"{ig_user_id}:{user_id}"
+
+def _human_active(ig_user_id: str, user_id: str) -> bool:
+    return _HUMAN_UNTIL.get(_key(ig_user_id, user_id), 0) > time()
+
+def _mark_human(ig_user_id: str, user_id: str, ttl: int | None = None) -> None:
+    _HUMAN_UNTIL[_key(ig_user_id, user_id)] = time() + (ttl or HUMAN_TTL_SEC)
+
+def _clear_human(ig_user_id: str, user_id: str) -> None:
+    _HUMAN_UNTIL.pop(_key(ig_user_id, user_id), None)
 
 # ------------------------------------------------------------------
 # VERIFY
@@ -51,7 +98,7 @@ async def meta_webhook(request: Request):
     if body.get("object") != "instagram":
         return JSONResponse({"status": "ignored"}, status_code=200)
 
-    entries: List[Dict[str, Any]] = body.get("entry", [])
+    entries: List[Dict[str, Any]] = body.get("entry", []) or []
     for entry in entries:
         ig_user_id = str(entry.get("id") or "")  # es. 1784...
         messaging_list = entry.get("messaging", []) or []
@@ -59,6 +106,25 @@ async def meta_webhook(request: Request):
         ig_account_id = await _get_ig_account_id(ig_user_id)
 
         for evt in messaging_list:
+            # --- HANDOVER: pausa IA quando l'umano prende/lascia il thread ---
+            handover = evt.get("pass_thread_control") or evt.get("take_thread_control")
+            if isinstance(handover, dict):
+                try:
+                    new_owner = handover.get("new_owner_app_id") or handover.get("recipient_app_id")
+                    prev_owner = handover.get("previous_owner_app_id")
+                    sender_id = str((evt.get("sender") or {}).get("id") or "")
+                    recipient_id = str((evt.get("recipient") or {}).get("id") or "")
+                    user_id = sender_id if sender_id and sender_id != ig_user_id else recipient_id
+                    if new_owner == INBOX_APP_ID:
+                        _mark_human(ig_user_id, user_id)
+                        logger.info("Handover to INBOX: pause AI for %s", _key(ig_user_id, user_id))
+                    elif prev_owner == INBOX_APP_ID:
+                        _clear_human(ig_user_id, user_id)
+                        logger.info("Handover from INBOX: resume AI for %s", _key(ig_user_id, user_id))
+                except Exception as e:
+                    logger.warning("handover parse err: %s", e)
+                continue
+
             sender = (evt.get("sender") or {})
             recipient = (evt.get("recipient") or {})
             message = evt.get("message")
@@ -72,7 +138,7 @@ async def meta_webhook(request: Request):
             except Exception as e:
                 logger.warning("DB log(in) failed: %s", e)
 
-            # --- SOLO messaggi di testo non-echo ---
+            # --- SOLO messaggi di testo non-echo da UTENTE ---
             if not isinstance(message, dict):
                 continue
             if message.get("is_echo"):
@@ -83,9 +149,17 @@ async def meta_webhook(request: Request):
             if sender_id == ig_user_id:
                 continue
 
-            # --- Reply (AI con fallback) ---
+            # Se umano attivo su thread e vogliamo rispettarlo -> non rispondere
+            if RESPECT_HUMAN and _human_active(ig_user_id, sender_id):
+                logger.info("Human active: skip AI reply for %s", _key(ig_user_id, sender_id))
+                continue
+
+            # --- Conversational memory: aggiungi l'input utente alla sessione ---
+            _sess_add(ig_user_id, sender_id, "user", text_msg)
+
+            # --- Reply (AI con storia conversazionale) ---
             try:
-                reply_text = await ai_reply(text_msg)
+                reply_text = await ai_reply_with_history(ig_user_id, sender_id)
             except Exception as e:
                 logger.error("AI error: %s", e)
                 reply_text = _fallback_reply(text_msg)
@@ -99,12 +173,20 @@ async def meta_webhook(request: Request):
             # --- Invio via /me/messages ---
             ok, resp = await _send_dm_via_me(page_token, sender_id, reply_text)
 
-            # --- AUTO TAKEOVER + RETRY UNA VOLTA ---
-            if (not ok) and _needs_takeover(resp):
-                took = await _take_thread_control(page_token, FB_PAGE_ID, sender_id)
-                logger.info("take_thread_control took=%s", took)
-                if took:
-                    ok, resp = await _send_dm_via_me(page_token, sender_id, reply_text)
+            # Se fallisce perché non siamo proprietari del thread:
+            if not ok and _needs_takeover(resp):
+                if RESPECT_HUMAN:
+                    _mark_human(ig_user_id, sender_id)
+                    logger.info("Got 2534037: respect human -> pause AI for %s", _key(ig_user_id, sender_id))
+                else:
+                    took = await _take_thread_control(page_token, FB_PAGE_ID, sender_id)
+                    logger.info("take_thread_control took=%s", took)
+                    if took:
+                        ok, resp = await _send_dm_via_me(page_token, sender_id, reply_text)
+
+            # Se inviato con successo, append risposta in memoria
+            if ok:
+                _sess_add(ig_user_id, sender_id, "assistant", reply_text)
 
             # Log OUT (best-effort)
             try:
@@ -128,26 +210,39 @@ def _fallback_reply(text_msg: str) -> str:
         t = t[:240] + "…"
     return f"MF.AI: ho ricevuto “{t}”"
 
-async def ai_reply(user_text: str) -> str:
-    # Se non hai messo la chiave -> fallback
-    if not OPENAI_API_KEY:
-        logger.warning("OPENAI_API_KEY assente: uso fallback")
-        return _fallback_reply(user_text)
+def _system_prompt_for_thread(has_history: bool) -> str:
+    base = (
+        "Sei l’assistente MF.AI. Rispondi in ITALIANO, tono amichevole e sintetico. "
+        "Mantieni il CONTINUUM della conversazione: non ri-iniziare con saluti se c’è già contesto. "
+        "Se l’utente risponde con una parola breve (es. 'Roma'), interpretala come risposta alla tua ultima domanda. "
+        "Fai al massimo UNA domanda di chiarimento per volta."
+    )
+    if has_history:
+        base += " NON ripetere domande già fatte; usa le informazioni appena fornite dall’utente."
+    return base
 
-    sys = ("Sei l’assistente MF.AI. Rispondi in italiano, tono amichevole, breve e utile. "
-           "Se manca contesto, fai UNA sola domanda chiarificatrice.")
+async def ai_reply_with_history(ig_user_id: str, user_id: str) -> str:
+    """Costruisce il prompt includendo la history in-RAM per il thread."""
+    sess = _sess_get(ig_user_id, user_id)
+    use_history = len(sess) > 1  # c'è già almeno 1 turno precedente
+    sys = _system_prompt_for_thread(use_history)
+
+    # Costruisci i messaggi per OpenAI: system + history (max 10) + ultimo user già appeso in sess
+    history = sess[-10:]
+    messages = [{"role": "system", "content": sys}] + history
+
+    if not OPENAI_API_KEY:
+        logger.warning("OPENAI_API_KEY assente: uso fallback (con history)")
+        # fallback: rispondi usando l'ultimo user
+        last_user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+        return _fallback_reply(last_user)
+
+    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
     payload = {
-        "model": "gpt-4o-mini",  # scegli il tuo modello
-        "messages": [
-            {"role": "system", "content": sys},
-            {"role": "user", "content": user_text}
-        ],
+        "model": "gpt-4o-mini",
+        "messages": messages,
         "temperature": 0.7,
-        "max_tokens": 200
-    }
-    headers = {
-        "Authorization": f"Bearer {OPENAI_API_KEY}",
-        "Content-Type": "application/json"
+        "max_tokens": 220,
     }
     timeout = httpx.Timeout(12.0, connect=6.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
@@ -155,14 +250,16 @@ async def ai_reply(user_text: str) -> str:
                               headers=headers, json=payload)
         if r.status_code != 200:
             logger.error("OpenAI HTTP %s: %s", r.status_code, r.text)
-            return _fallback_reply(user_text)
+            last_user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+            return _fallback_reply(last_user)
         j = r.json()
         try:
             txt = (j["choices"][0]["message"]["content"]).strip()
-            return txt or _fallback_reply(user_text)
+            return txt or _fallback_reply(messages[-1]["content"])
         except Exception as e:
             logger.error("OpenAI parse error: %s | payload=%s", e, j)
-            return _fallback_reply(user_text)
+            last_user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+            return _fallback_reply(last_user)
 
 # ------------------------------------------------------------------
 # HELPERS
@@ -199,7 +296,7 @@ async def _log_message(ig_account_id: int | None, direction: str, payload: Any):
 
 def _needs_takeover(resp: Dict[str, Any]) -> bool:
     try:
-        err = resp.get("error", {})
+        err = (resp or {}).get("error", {})
         return err.get("code") == 100 and err.get("error_subcode") == 2534037
     except Exception:
         return False
