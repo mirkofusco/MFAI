@@ -4,8 +4,12 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from app.routers import admin_api
+
 
 app = FastAPI(title="MF.AI")
+app.include_router(admin_api.router)
+
 
 app.include_router(meta_webhook_router)
 
