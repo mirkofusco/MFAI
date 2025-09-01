@@ -44,8 +44,6 @@ from app.routers.meta_webhook import router as meta_webhook_router
 from fastapi.staticfiles import StaticFiles
 from app.admin_ui.routes import router as admin_ui_router
 
-app.mount("/static", StaticFiles(directory="app/admin_ui/static"), name="static")
-app.include_router(admin_ui_router)
 
 
 # Se hai creato l’Admin UI (step precedenti), decommenta la riga seguente:
@@ -58,6 +56,9 @@ app.include_router(admin_ui_router)
 APP_NAME = "MF.AI"
 app = FastAPI(title=APP_NAME)
 
+app.mount("/static", StaticFiles(directory="app/admin_ui/static"), name="static")
+app.include_router(admin_ui_router)
+
 # API amministrative (JSON)
 app.include_router(admin_api.router)
 
@@ -65,8 +66,7 @@ app.include_router(admin_api.router)
 app.include_router(meta_webhook_router)
 
 # Admin UI (opzionale, se presente)
-# app.include_router(admin_ui_router)
-
+# 
 # Templates (HTML)
 templates = Jinja2Templates(directory="app/templates")
 
