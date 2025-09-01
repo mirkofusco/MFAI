@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h1 class="h4 m-0">Clients</h1>
+</div>
+
+<div class="table-responsive shadow-sm">
+  <table class="table table-sm table-hover align-middle mb-0 bg-white">
+    <thead class="table-light">
+      <tr>
+        <th scope="col">Client ID</th>
+        <th scope="col">Name</th>
+        <th scope="col">Email</th>
+        <th scope="col">IG Account ID</th>
+        <th scope="col">IG User ID</th>
+        <th scope="col">Username</th>
+        <th scope="col">Active</th>
+        <th scope="col">Token Exp.</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if items and items|length > 0 %}
+        {% for it in items %}
+        <tr>
+          <td>{{ it.client_id }}</td>
+          <td>{{ it.name }}</td>
+          <td>{{ it.email }}</td>
+          <td>{{ it.ig_account_id }}</td>
+          <td>{{ it.ig_user_id }}</td>
+          <td>{{ it.username }}</td>
+          <td>
+            {% if it.active is not none %}
+              <span class="badge {% if it.active %}bg-success{% else %}bg-secondary{% endif %}">
+                {{ 'ON' if it.active else 'OFF' }}
+              </span>
+            {% endif %}
+          </td>
+          <td>
+            {% if it.active_token_exp %}
+              {{ it.active_token_exp }}
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      {% else %}
+        <tr><td colspan="8" class="text-center text-muted py-4">Nessun dato</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

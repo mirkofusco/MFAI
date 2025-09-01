@@ -8,11 +8,15 @@
   <link href="/static/css/app.css" rel="stylesheet" />
 </head>
 <body class="bg-light">
-<nav class="navbar navbar-dark bg-dark">
-  <div class="container-fluid">
-    <a class="navbar-brand fw-semibold" href="/ui/">MF.AI Admin</a>
-  </div>
-</nav>
+    <nav class="navbar navbar-dark bg-dark">
+        <div class="container-fluid">
+          <a class="navbar-brand fw-semibold" href="/ui/">MF.AI Admin</a>
+          <div>
+            <a class="nav-link d-inline-block text-white-50" href="/ui/clients">Clients</a>
+          </div>
+        </div>
+      </nav>
+      
 <main class="container py-4">
   {% block content %}{% endblock %}
 </main>
