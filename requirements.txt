@@ -12,3 +12,7 @@ asyncpg>=0.29
 httpx==0.27.2
 Jinja2 @ file:///Users/cbousseau/work/recipes/ci_py311/jinja2_1677916113134/work
 python-multipart==0.0.20
+httpx==0.27.2
+Jinja2 @ file:///Users/cbousseau/work/recipes/ci_py311/jinja2_1677916113134/work
+jinja2-time @ file:///opt/conda/conda-bld/jinja2-time_1649251842261/work
+python-multipart==0.0.20
