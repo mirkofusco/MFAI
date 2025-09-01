@@ -16,6 +16,7 @@
         <th scope="col">Username</th>
         <th scope="col">Active</th>
         <th scope="col">Token Exp.</th>
+        <th scope="col" class="text-end">Azioni</th>
       </tr>
     </thead>
     <tbody>
@@ -41,19 +42,51 @@
             {% if it.token_exp_human %}
               {{ it.token_exp_human }}
               {% if it.days_left is not none %}
-                <small class="text-muted">({{ 'in ' ~ it.days_left ~ 'd' if it.days_left >= 0 else (it.days_left|abs) ~ 'd ago' }})</small>
+                <small class="text-muted">
+                  ({{ 'in ' ~ it.days_left ~ 'd' if it.days_left >= 0 else (it.days_left|abs) ~ 'd ago' }})
+                </small>
               {% endif %}
             {% else %}
               —
             {% endif %}
           </td>
+          <td class="text-end">
+            <div class="d-flex gap-2 justify-content-end">
+              <!-- Toggle Active -->
+              <form method="post" action="/ui/accounts/toggle-active" class="m-0">
+                <input type="hidden" name="ig_account_id" value="{{ it.ig_account_id or '' }}">
+                <input type="hidden" name="new_active" value="{{ 0 if it.active else 1 }}">
+                <button class="btn btn-sm {{ 'btn-outline-secondary' if it.active else 'btn-success' }}"
+                        {% if not it.ig_account_id %}disabled{% endif %}>
+                  {{ 'Disattiva' if it.active else 'Attiva' }}
+                </button>
+              </form>
+
+              <!-- Refresh Token -->
+              <form method="post" action="/ui/tokens/refresh" class="m-0 d-flex gap-1">
+                <input type="hidden" name="ig_user_id" value="{{ it.ig_user_id or '' }}">
+                <input type="text" name="token" placeholder="Nuovo token"
+                       class="form-control form-control-sm"
+                       style="width: 12rem"
+                       {% if not it.ig_user_id %}disabled{% endif %}>
+                <input type="number" name="expires_in_days" value="60" min="1" max="365"
+                       class="form-control form-control-sm" style="width: 5.5rem"
+                       title="Giorni di validità"
+                       {% if not it.ig_user_id %}disabled{% endif %}>
+                <button class="btn btn-sm btn-primary"
+                        {% if not it.ig_user_id %}disabled{% endif %}>
+                  Refresh
+                </button>
+              </form>
+            </div>
+          </td>
         </tr>
         {% endfor %}
       {% else %}
-        <tr><td colspan="8" class="text-center text-muted py-4">Nessun dato</td></tr>
+        <tr><td colspan="9" class="text-center text-muted py-4">Nessun dato</td></tr>
       {% endif %}
     </tbody>
-    
   </table>
 </div>
+
 {% endblock %}
