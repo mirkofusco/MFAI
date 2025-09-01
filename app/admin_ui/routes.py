@@ -9,6 +9,9 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.templating import Jinja2Templates
 from zoneinfo import ZoneInfo
+from sqlalchemy import text
+from app.db import engine
+
 
 router = APIRouter(prefix="/ui", tags=["Admin UI"])
 templates = Jinja2Templates(directory="app/admin_ui/templates")
@@ -87,20 +90,17 @@ async def toggle_active(
     new_active: int = Form(...),
     _: bool = Depends(require_admin),
 ):
-    """
-    Attiva/Disattiva un IG account via Admin API:
-    PATCH /admin/accounts/{ig_account_id}  body: {"active": true/false}
-    """
-    url = f"{ADMIN_BASE_URL}/admin/accounts/{ig_account_id}"
-    payload = {"active": bool(int(new_active))}
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.patch(url, json=payload, auth=(ADMIN_USER, ADMIN_PASSWORD))
-    if resp.status_code == 404:
-        raise HTTPException(status_code=404, detail="Account non trovato")
-    if resp.status_code == 401:
-        raise HTTPException(status_code=502, detail="Admin API unauthorized")
-    resp.raise_for_status()
+    """Attiva/Disattiva direttamente su Postgres."""
+    active = bool(int(new_active))
+    async with engine.begin() as conn:
+        res = await conn.execute(
+            text("UPDATE mfai_app.instagram_accounts SET active = :active WHERE id = :id"),
+            {"active": active, "id": ig_account_id},
+        )
+        if res.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Account non trovato")
     return RedirectResponse(url="/ui/clients", status_code=303)
+
 
 @router.post("/tokens/refresh")
 async def ui_refresh_token(
@@ -125,3 +125,31 @@ async def ui_refresh_token(
         raise HTTPException(status_code=502, detail="API key non valida lato server")
     resp.raise_for_status()
     return RedirectResponse(url="/ui/clients", status_code=303)
+
+@router.post("/tokens/refresh")
+async def ui_refresh_token(
+    ig_user_id: str = Form(...),
+    token: str = Form(...),
+    expires_in_days: int = Form(60),
+    _: bool = Depends(require_admin),
+):
+    """Ruota il token via /tokens/refresh (richiede x-api-key)."""
+    # Guardia: token obbligatorio e con lunghezza minima
+    if not token or not token.strip() or len(token.strip()) < 5:
+        # redirect “soft” alla lista; opzionale puoi aggiungere ?err=missing_token
+        return RedirectResponse(url="/ui/clients", status_code=303)
+
+    url = f"{ADMIN_BASE_URL}/tokens/refresh"
+    payload = {
+        "ig_user_id": ig_user_id,
+        "token": token.strip(),
+        "expires_in_days": int(expires_in_days),
+    }
+    headers = {"x-api-key": ADMIN_API_KEY}
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.post(url, json=payload, headers=headers)
+    if resp.status_code == 401:
+        raise HTTPException(status_code=502, detail="API key non valida lato server")
+    resp.raise_for_status()
+    return RedirectResponse(url="/ui/clients", status_code=303)
+
