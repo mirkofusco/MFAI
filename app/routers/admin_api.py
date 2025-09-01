@@ -129,3 +129,30 @@ async def list_logs(
     """)
     rows = await db.execute(q, {"limit": limit})
     return [dict(r) for r in rows.mappings().all()]
+
+@router.post("/accounts")
+async def create_account(
+    _: dict = Depends(verify_admin),
+    db: AsyncSession = Depends(get_session),
+    payload: dict = Body(...)
+):
+    # payload: {"client_id": 5, "ig_user_id":"...", "username":"..."}
+    exists_q = text("SELECT 1 FROM mfai_app.instagram_accounts WHERE ig_user_id = :ig LIMIT 1")
+    if (await db.execute(exists_q, {"ig": payload["ig_user_id"]})).first():
+        return {"error": "already_exists", "ig_user_id": payload["ig_user_id"]}
+
+    q = text("""
+        INSERT INTO mfai_app.instagram_accounts
+            (client_id, ig_user_id, username, active, bot_enabled)
+        VALUES
+            (:client_id, :ig_user_id, :username, true, true)
+        RETURNING id, client_id, ig_user_id, username, active, bot_enabled, created_at
+    """)
+    row = await db.execute(q, {
+        "client_id": payload["client_id"],
+        "ig_user_id": payload["ig_user_id"],
+        "username": payload["username"],
+    })
+    await db.commit()
+    return dict(row.mappings().one())
+
