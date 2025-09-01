@@ -1,16 +1,14 @@
-import os, secrets
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from fastapi.responses import HTMLResponse
-from starlette.templating import Jinja2Templates
-import httpx
+import os
+import secrets
 from typing import Any, Dict, List
-from fastapi import Form
-from fastapi.responses import RedirectResponse
 from datetime import datetime, timezone
+
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request, status, Form
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.responses import HTMLResponse, RedirectResponse
+from starlette.templating import Jinja2Templates
 from zoneinfo import ZoneInfo
-
-
 
 router = APIRouter(prefix="/ui", tags=["Admin UI"])
 templates = Jinja2Templates(directory="app/admin_ui/templates")
@@ -21,9 +19,7 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 ADMIN_BASE_URL = os.getenv("ADMIN_BASE_URL", "http://127.0.0.1:8000")
 ADMIN_API_KEY = os.getenv("API_KEY", "")
 
-
-
-def require_admin(credentials: HTTPBasicCredentials = Depends(security)):
+def require_admin(credentials: HTTPBasicCredentials = Depends(security)) -> bool:
     user_ok = secrets.compare_digest(credentials.username, ADMIN_USER)
     pwd_ok = secrets.compare_digest(credentials.password, ADMIN_PASSWORD)
     if not (user_ok and pwd_ok):
@@ -35,21 +31,19 @@ def require_admin(credentials: HTTPBasicCredentials = Depends(security)):
     return True
 
 @router.get("/ping", response_class=HTMLResponse)
-def ping(_: bool = Depends(require_admin)):
+def ping(_: bool = Depends(require_admin)) -> HTMLResponse:
     return HTMLResponse("<h1>MF.AI Admin UI: OK</h1>")
 
 @router.get("/", response_class=HTMLResponse)
-def home(request: Request, _: bool = Depends(require_admin)):
+def home(request: Request, _: bool = Depends(require_admin)) -> HTMLResponse:
     return templates.TemplateResponse(
         "home.html",
         {"request": request, "page_title": "MF.AI — Admin UI"},
     )
 
-from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
-
 @router.get("/clients", response_class=HTMLResponse)
-async def clients_page(request: Request, _: bool = Depends(require_admin)):
+async def clients_page(request: Request, _: bool = Depends(require_admin)) -> HTMLResponse:
+    # usa l'endpoint aggregato pubblico /clients
     url = f"{ADMIN_BASE_URL}/clients"
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.get(url)
@@ -58,7 +52,7 @@ async def clients_page(request: Request, _: bool = Depends(require_admin)):
 
     items: List[Dict[str, Any]] = data.get("items", []) if isinstance(data, dict) else data
 
-    # Enrichment: date leggibili e giorni residui
+    # Enrichment: format date & days left
     now_utc = datetime.now(timezone.utc)
     tz = ZoneInfo("Europe/Rome")
 
@@ -69,7 +63,7 @@ async def clients_page(request: Request, _: bool = Depends(require_admin)):
             dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
             return dt.astimezone(tz).strftime("%Y-%m-%d %H:%M")
         except Exception:
-            return iso
+            return iso  # fallback
 
     for it in items:
         exp = it.get("active_token_exp") or it.get("last_token_exp")
@@ -86,9 +80,8 @@ async def clients_page(request: Request, _: bool = Depends(require_admin)):
         "clients.html",
         {"request": request, "page_title": "Clients — MF.AI Admin", "items": items},
     )
-    
-    
-    @router.post("/accounts/toggle-active")
+
+@router.post("/accounts/toggle-active")
 async def toggle_active(
     ig_account_id: int = Form(...),
     new_active: int = Form(...),
@@ -102,13 +95,12 @@ async def toggle_active(
     payload = {"active": bool(int(new_active))}
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.patch(url, json=payload, auth=(ADMIN_USER, ADMIN_PASSWORD))
-        if resp.status_code == 404:
-            raise HTTPException(status_code=404, detail="Account non trovato")
-        if resp.status_code == 401:
-            raise HTTPException(status_code=502, detail="Admin API unauthorized")
-        resp.raise_for_status()
+    if resp.status_code == 404:
+        raise HTTPException(status_code=404, detail="Account non trovato")
+    if resp.status_code == 401:
+        raise HTTPException(status_code=502, detail="Admin API unauthorized")
+    resp.raise_for_status()
     return RedirectResponse(url="/ui/clients", status_code=303)
-
 
 @router.post("/tokens/refresh")
 async def ui_refresh_token(
@@ -129,10 +121,7 @@ async def ui_refresh_token(
     headers = {"x-api-key": ADMIN_API_KEY}
     async with httpx.AsyncClient(timeout=15.0) as client:
         resp = await client.post(url, json=payload, headers=headers)
-        if resp.status_code == 401:
-            raise HTTPException(status_code=502, detail="API key non valida lato server")
-        resp.raise_for_status()
+    if resp.status_code == 401:
+        raise HTTPException(status_code=502, detail="API key non valida lato server")
+    resp.raise_for_status()
     return RedirectResponse(url="/ui/clients", status_code=303)
-
-
-
