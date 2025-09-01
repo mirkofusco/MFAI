@@ -40,22 +40,16 @@ def home(request: Request, _: bool = Depends(require_admin)):
 
 @router.get("/clients", response_class=HTMLResponse)
 async def clients_page(request: Request, _: bool = Depends(require_admin)):
-    # Chiama l’API admin protetta (/admin/clients) con le stesse credenziali Basic
-    url = f"{ADMIN_BASE_URL}/admin/clients"
+    # Usa l'endpoint aggregato pubblico /clients (join già fatto lato API)
+    url = f"{ADMIN_BASE_URL}/clients"
     async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.get(url, auth=(ADMIN_USER, ADMIN_PASSWORD))
-        if resp.status_code == 401:
-            # segnala errore di configurazione credenziali lato server
-            raise HTTPException(status_code=502, detail="Admin API unauthorized from UI")
+        resp = await client.get(url)  # niente Basic Auth qui
         resp.raise_for_status()
         data = resp.json()
 
-    items: List[Dict[str, Any]] = data if isinstance(data, list) else data.get("items", [])
+    items: List[Dict[str, Any]] = data.get("items", []) if isinstance(data, dict) else data
     return templates.TemplateResponse(
         "clients.html",
-        {
-            "request": request,
-            "page_title": "Clients — MF.AI Admin",
-            "items": items,
-        },
+        {"request": request, "page_title": "Clients — MF.AI Admin", "items": items},
     )
+
