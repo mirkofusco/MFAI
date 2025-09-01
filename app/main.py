@@ -30,6 +30,8 @@ from fastapi.security import APIKeyHeader
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from sqlalchemy import text
+from app.routers import admin_api
+
 
 from app.db import engine  # engine async verso Neon
 from app.routers.meta_webhook import router as meta_webhook_router
@@ -39,6 +41,9 @@ from app.routers.meta_webhook import router as meta_webhook_router
 # ----------------------------
 APP_NAME = "MF.AI"
 app = FastAPI(title=APP_NAME)
+
+app.include_router(admin_api.router)
+
 
 # Router Webhook Meta (GET verify + POST eventi)
 app.include_router(meta_webhook_router)

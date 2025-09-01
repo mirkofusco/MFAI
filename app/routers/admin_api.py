@@ -3,7 +3,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from typing import Optional
 from app.security_admin import verify_admin
-from app.db import get_session  # adegua se il path è diverso
+from app.db_session import get_session
+
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
