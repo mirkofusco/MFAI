@@ -25,19 +25,26 @@
           <td>{{ it.client_id }}</td>
           <td>{{ it.name }}</td>
           <td>{{ it.email }}</td>
-          <td>{{ it.ig_account_id }}</td>
-          <td>{{ it.ig_user_id }}</td>
-          <td>{{ it.username }}</td>
+          <td>{{ it.ig_account_id or '—' }}</td>
+          <td>{{ it.ig_user_id or '—' }}</td>
+          <td>{{ it.username or '—' }}</td>
           <td>
             {% if it.active is not none %}
-              <span class="badge {% if it.active %}bg-success{% else %}bg-secondary{% endif %}">
+              <span class="badge {{ 'bg-success' if it.active else 'bg-secondary' }}">
                 {{ 'ON' if it.active else 'OFF' }}
               </span>
+            {% else %}
+              —
             {% endif %}
           </td>
           <td>
-            {% if it.active_token_exp %}
-              {{ it.active_token_exp }}
+            {% if it.token_exp_human %}
+              {{ it.token_exp_human }}
+              {% if it.days_left is not none %}
+                <small class="text-muted">({{ 'in ' ~ it.days_left ~ 'd' if it.days_left >= 0 else (it.days_left|abs) ~ 'd ago' }})</small>
+              {% endif %}
+            {% else %}
+              —
             {% endif %}
           </td>
         </tr>
@@ -46,6 +53,7 @@
         <tr><td colspan="8" class="text-center text-muted py-4">Nessun dato</td></tr>
       {% endif %}
     </tbody>
+    
   </table>
 </div>
 {% endblock %}

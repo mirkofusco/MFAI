@@ -38,18 +38,48 @@ def home(request: Request, _: bool = Depends(require_admin)):
         {"request": request, "page_title": "MF.AI — Admin UI"},
     )
 
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
 @router.get("/clients", response_class=HTMLResponse)
 async def clients_page(request: Request, _: bool = Depends(require_admin)):
-    # Usa l'endpoint aggregato pubblico /clients (join già fatto lato API)
     url = f"{ADMIN_BASE_URL}/clients"
     async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.get(url)  # niente Basic Auth qui
+        resp = await client.get(url)
         resp.raise_for_status()
         data = resp.json()
 
     items: List[Dict[str, Any]] = data.get("items", []) if isinstance(data, dict) else data
+
+    # Enrichment: format date & days left, guard nulls
+    now_utc = datetime.now(timezone.utc)
+    tz = ZoneInfo("Europe/Rome")
+
+    def fmt_iso_to_local(iso: str | None) -> str | None:
+        if not iso:
+            return None
+        try:
+            dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+            return dt.astimezone(tz).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return iso  # fallback raw
+
+    for it in items:
+        exp = it.get("active_token_exp") or it.get("last_token_exp")
+        it["token_exp_human"] = fmt_iso_to_local(exp)
+        # days left
+        days_left = None
+        if exp:
+            try:
+                dt = datetime.fromisoformat(exp.replace("Z", "+00:00"))
+                days_left = (dt - now_utc).days
+            except Exception:
+                pass
+        it["days_left"] = days_left
+
     return templates.TemplateResponse(
         "clients.html",
         {"request": request, "page_title": "Clients — MF.AI Admin", "items": items},
     )
+
 
