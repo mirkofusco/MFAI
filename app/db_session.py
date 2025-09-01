@@ -14,6 +14,9 @@ def _adapt_dsn(dsn: Optional[str]) -> str:
     return dsn  # già async o altro driver
 
 DATABASE_URL = _adapt_dsn(os.environ.get("DATABASE_URL"))
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL env var is missing")
+
 
 engine = create_async_engine(
     DATABASE_URL,
@@ -26,3 +29,13 @@ async_session_maker = async_sessionmaker(
     expire_on_commit=False,
     class_=AsyncSession,
 )
+
+# --- DEPENDENCY FASTAPI: get_session ---
+# Usa l'async session maker già definito nel file.
+# (Nel tuo progetto si chiama `async_session_maker`.)
+
+from typing import AsyncGenerator
+
+async def get_session() -> AsyncGenerator[AsyncSession, None]:
+    async with async_session_maker() as session:
+        yield session
