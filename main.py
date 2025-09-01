@@ -5,6 +5,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from app.routers import admin_api
+app.include_router(admin_api.router)
 
 
 app = FastAPI(title="MF.AI")
