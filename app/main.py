@@ -1,40 +1,56 @@
 # app/main.py
 # ============================================================
-# MF.AI - FastAPI
-# - /db/health       : ping DB Neon
-# - /login           : pagina HTML (app/templates/login.html)
-# - /save-token      : salva token/cliente/account su Postgres
-# - /clients         : elenco clienti + IG account + scadenza token
-# - /tokens/active   : leggi token attivo per ig_user_id
-# - /tokens/refresh  : ruota/aggiorna token (unico attivo)
-# - /tokens/expiring : token attivi in scadenza entro N giorni
-# - /oauth/callback  : callback OAuth (Instagram Business Login)
+# MF.AI — FastAPI
 #
-# Richiede:
-#   .env con
+# Endpoints principali:
+# - /health           : ping applicativo
+# - /db/health        : ping DB Neon
+# - /login            : pagina HTML (app/templates/login.html)
+# - /save-token       : salva token/cliente/account su Postgres
+# - /clients          : elenco clienti + IG account + scadenza token
+# - /tokens/active    : leggi token attivo per ig_user_id
+# - /tokens/refresh   : ruota/aggiorna token (unico attivo)
+# - /tokens/expiring  : token attivi in scadenza entro N giorni
+# - /oauth/callback   : callback OAuth (Instagram Business Login)
+#
+# Requisiti ambiente:
+#   .env con:
 #     - API_KEY
-#     - DATABASE_URL = postgresql+asyncpg://.../mfai  (senza query string)
-#   app/db.py che crea l'engine con SSL:
-#     create_async_engine(DATABASE_URL, connect_args={
-#       "ssl": True, "server_settings": {"search_path": "mfai_app,public"}
-#     })
+#     - DATABASE_URL = postgresql+asyncpg://.../mfai   (senza querystring)
+#
+# Requisiti DB (app/db.py):
+#   create_async_engine(DATABASE_URL, connect_args={
+#     "ssl": True,
+#     "server_settings": {"search_path": "mfai_app,public"}
+#   })
 # ============================================================
 
-from datetime import datetime, timedelta, timezone
-import os
+from __future__ import annotations
 
-from fastapi import FastAPI, Request, HTTPException, Depends
+import os
+from datetime import datetime, timedelta, timezone
+
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.security import APIKeyHeader
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from sqlalchemy import text
-from app.routers import admin_api
-
 
 from app.db import engine  # engine async verso Neon
+from app.routers import admin_api
 from app.routers.meta_webhook import router as meta_webhook_router
+from fastapi.staticfiles import StaticFiles
+from app.admin_ui.routes import router as admin_ui_router
+
+app.mount("/static", StaticFiles(directory="app/admin_ui/static"), name="static")
+app.include_router(admin_ui_router)
+
+
+# Se hai creato l’Admin UI (step precedenti), decommenta la riga seguente:
+# from app.admin_ui.routes import router as admin_ui_router
+
 
 # ----------------------------
 # Config base
@@ -42,16 +58,19 @@ from app.routers.meta_webhook import router as meta_webhook_router
 APP_NAME = "MF.AI"
 app = FastAPI(title=APP_NAME)
 
+# API amministrative (JSON)
 app.include_router(admin_api.router)
 
-
-# Router Webhook Meta (GET verify + POST eventi)
+# Webhook Meta (GET verify + POST eventi)
 app.include_router(meta_webhook_router)
+
+# Admin UI (opzionale, se presente)
+# app.include_router(admin_ui_router)
 
 # Templates (HTML)
 templates = Jinja2Templates(directory="app/templates")
 
-# CORS (aperti per ora; poi restringi ai tuoi domini)
+# CORS (aperti per ora; restringere ai domini di produzione)
 ALLOWED_ORIGINS = [
     "https://mid-ranna-soluzionidigitaliroma-f8d1ef2a.koyeb.app",
     "https://api.soluzionidigitali.roma.it",
@@ -65,17 +84,18 @@ app.add_middleware(
 )
 
 # --- API Key guard ---
-API_KEY = os.getenv("API_KEY")
+API_KEY = os.getenv("API_KEY", "")
 api_key_header = APIKeyHeader(name="x-api-key", auto_error=False)
 
 
-async def require_api_key(key: str | None = Depends(api_key_header)):
+async def require_api_key(key: str | None = Depends(api_key_header)) -> None:
     if not API_KEY or key != API_KEY:
+        # 401 senza body sensibile
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
 # ---------------------------------------------------------
-# Schema & indici (TUTTO prefissato con mfai_app.)
+# Schema & indici (prefisso mfai_app.)
 # ---------------------------------------------------------
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS mfai_app.clients (
@@ -100,11 +120,9 @@ CREATE TABLE IF NOT EXISTS mfai_app.tokens (
   access_token TEXT NOT NULL,
   expires_at TIMESTAMPTZ,
   long_lived BOOLEAN NOT NULL DEFAULT TRUE,
-  created_at TIMESTAMPTZ DEFAULT now()
+  created_at TIMESTAMPTZ DEFAULT now(),
+  active BOOLEAN NOT NULL DEFAULT TRUE
 );
-
-ALTER TABLE mfai_app.tokens
-  ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
 
 CREATE TABLE IF NOT EXISTS mfai_app.message_logs (
   id BIGSERIAL PRIMARY KEY,
@@ -127,27 +145,27 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_token_per_acct
 
 
 def _split_sql(sql: str):
-    """Divide il blocco in singoli statement, ignorando righe vuote."""
+    """Divide il blocco in singoli statement; ignora righe vuote."""
     for part in sql.split(";"):
         stmt = part.strip()
         if stmt:
-            yield stmt  # senza il ";" finale
+            yield stmt
 
 
 @app.on_event("startup")
 async def ensure_schema():
     async with engine.begin() as conn:
-        # 1) assicura lo schema privato e imposta il search_path
+        # 1) Assicura schema e search_path
         await conn.exec_driver_sql(
             "CREATE SCHEMA IF NOT EXISTS mfai_app AUTHORIZATION mfai_owner;"
         )
         await conn.exec_driver_sql("SET search_path TO mfai_app;")
 
-        # 2) debug identità
-        who = (await conn.execute(text("select current_user, current_schema();"))).first()
+        # 2) Debug identità
+        who = (await conn.execute(text("SELECT current_user, current_schema();"))).first()
         print("DB identity:", who)
 
-        # 3) crea/aggiorna oggetti schema
+        # 3) Crea/aggiorna oggetti schema
         for stmt in _split_sql(SCHEMA_SQL):
             await conn.exec_driver_sql(stmt)
 
@@ -173,17 +191,17 @@ def login_page(request: Request):
 @app.get("/db/health")
 async def db_health():
     async with engine.connect() as conn:
-        r = await conn.execute(text("select 'ok'"))
+        r = await conn.execute(text("SELECT 'ok'"))
         return {"db": r.scalar_one()}
 
 
-# --- NUOVA ROUTE: OAuth Callback Instagram (Business Login) ---
+# --- OAuth Callback Instagram (Business Login) ---
 @app.get("/oauth/callback")
 async def oauth_callback(request: Request):
     """
-    Endpoint di callback per il flusso OAuth (Instagram Business Login).
+    Callback del flusso OAuth (Instagram Business Login).
     Per ora conferma solo la ricezione del "code" e dello "state".
-    Lo scambio code -> access_token sarà aggiunto nello step successivo.
+    Lo scambio code -> access_token verrà aggiunto nello step successivo.
     """
     code = request.query_params.get("code")
     state = request.query_params.get("state")
@@ -192,7 +210,7 @@ async def oauth_callback(request: Request):
     return {
         "status": "ok",
         "received_code": True,
-        "code_preview": code[:12] + "..." if code else None,
+        "code_preview": (code[:12] + "..."),
         "state": state,
     }
 
@@ -206,7 +224,7 @@ class SaveTokenPayload(BaseModel):
     username: str = Field(..., min_length=1)
     client_name: str = "Default Client"
     client_email: str | None = None
-    # Se non invii expires_at, mettiamo +60 giorni da ora (UTC)
+    # Se non inviato, imposta +60 giorni da ora (UTC)
     expires_at: datetime | None = None
 
 
@@ -230,11 +248,14 @@ async def save_token(data: SaveTokenPayload):
                 text(
                     """
                     INSERT INTO mfai_app.clients (name, email)
-                    VALUES (:name,
-                            COALESCE(:email, REPLACE(LOWER(:name),' ','_') || '@example.local'))
-                    ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name
+                    VALUES (
+                      :name,
+                      COALESCE(:email, REPLACE(LOWER(:name),' ','_') || '@example.local')
+                    )
+                    ON CONFLICT (email) DO UPDATE
+                      SET name = EXCLUDED.name
                     RETURNING id
-                """
+                    """
                 ),
                 {"name": data.client_name, "email": data.client_email},
             )
@@ -246,10 +267,11 @@ async def save_token(data: SaveTokenPayload):
                     """
                     INSERT INTO mfai_app.instagram_accounts (client_id, ig_user_id, username, active)
                     VALUES (:client_id, :ig_user_id, :username, TRUE)
-                    ON CONFLICT (ig_user_id) DO
-                      UPDATE SET username = EXCLUDED.username, active = TRUE
+                    ON CONFLICT (ig_user_id) DO UPDATE
+                      SET username = EXCLUDED.username,
+                          active   = TRUE
                     RETURNING id
-                """
+                    """
                 ),
                 {
                     "client_id": client_id,
@@ -267,7 +289,7 @@ async def save_token(data: SaveTokenPayload):
                     SET active = FALSE
                     WHERE ig_account_id = :ig_account_id
                       AND active = TRUE
-                """
+                    """
                 ),
                 {"ig_account_id": ig_account_id},
             )
@@ -278,18 +300,18 @@ async def save_token(data: SaveTokenPayload):
                     """
                     INSERT INTO mfai_app.tokens (ig_account_id, access_token, expires_at, long_lived, active)
                     VALUES (:ig_account_id, :token, :expires_at, TRUE, TRUE)
-                """
+                    """
                 ),
                 {"ig_account_id": ig_account_id, "token": data.token, "expires_at": exp},
             )
 
-            # 5) Log
+            # 5) Log tecnico
             await conn.execute(
                 text(
                     """
                     INSERT INTO mfai_app.message_logs (ig_account_id, direction, payload)
                     VALUES (:ig_account_id, 'in', :payload)
-                """
+                    """
                 ),
                 {
                     "ig_account_id": ig_account_id,
@@ -308,7 +330,7 @@ async def save_token(data: SaveTokenPayload):
 
 
 # ---------------------------------------------------------
-# Lista rapida per debug
+# Elenco clienti + IG account (debug rapido)
 # ---------------------------------------------------------
 @app.get("/clients")
 async def list_clients():
@@ -326,13 +348,14 @@ async def list_clients():
             SELECT t.expires_at
             FROM mfai_app.tokens t
             WHERE t.ig_account_id = ia.id AND t.active = TRUE
+            ORDER BY t.expires_at DESC NULLS LAST
             LIMIT 1
-          ) AS last_token_exp
+          ) AS active_token_exp
         FROM mfai_app.clients c
         LEFT JOIN mfai_app.instagram_accounts ia ON ia.client_id = c.id
         ORDER BY c.id DESC, ia.id DESC
         LIMIT 50
-    """
+        """
     )
     async with engine.connect() as conn:
         rows = (await conn.execute(q)).mappings().all()
@@ -348,8 +371,9 @@ async def get_active_token(ig_user_id: str):
         FROM mfai_app.tokens t
         JOIN mfai_app.instagram_accounts ia ON ia.id = t.ig_account_id
         WHERE ia.ig_user_id = :ig AND t.active = TRUE
+        ORDER BY t.created_at DESC
         LIMIT 1
-    """
+        """
     )
     async with engine.connect() as conn:
         row = (await conn.execute(q, {"ig": ig_user_id})).first()
@@ -368,7 +392,12 @@ async def refresh_token(data: RefreshTokenPayload):
         row = (
             await conn.execute(
                 text(
-                    "SELECT id FROM mfai_app.instagram_accounts WHERE ig_user_id = :ig AND active = TRUE LIMIT 1"
+                    """
+                    SELECT id
+                    FROM mfai_app.instagram_accounts
+                    WHERE ig_user_id = :ig AND active = TRUE
+                    LIMIT 1
+                    """
                 ),
                 {"ig": data.ig_user_id},
             )
@@ -381,7 +410,11 @@ async def refresh_token(data: RefreshTokenPayload):
         # disattiva il token attivo esistente
         await conn.execute(
             text(
-                "UPDATE mfai_app.tokens SET active = FALSE WHERE ig_account_id = :id AND active = TRUE"
+                """
+                UPDATE mfai_app.tokens
+                SET active = FALSE
+                WHERE ig_account_id = :id AND active = TRUE
+                """
             ),
             {"id": ig_account_id},
         )
@@ -392,7 +425,7 @@ async def refresh_token(data: RefreshTokenPayload):
                 """
                 INSERT INTO mfai_app.tokens (ig_account_id, access_token, expires_at, long_lived, active)
                 VALUES (:ig_account_id, :token, :expires_at, TRUE, TRUE)
-            """
+                """
             ),
             {"ig_account_id": ig_account_id, "token": data.token, "expires_at": exp},
         )
@@ -419,7 +452,7 @@ async def tokens_expiring(days: int = 10):
           AND t.expires_at <= :threshold
         ORDER BY t.expires_at ASC
         LIMIT 200
-    """
+        """
     )
     async with engine.connect() as conn:
         rows = (await conn.execute(q, {"threshold": threshold})).mappings().all()
