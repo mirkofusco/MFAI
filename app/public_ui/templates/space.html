@@ -1,0 +1,14 @@
+{% extends "base_public.html" %}
+{% block content %}
+<article>
+  <h2 class="h4">{{ space.title }}</h2>
+  <p>{{ space.intro }}</p>
+
+  <details class="mt-3">
+    <summary>Dettagli</summary>
+    <ul>
+      <li>Slug: <code>{{ slug }}</code></li>
+    </ul>
+  </details>
+</article>
+{% endblock %}
