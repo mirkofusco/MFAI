@@ -5,6 +5,14 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>{{ title or "MF.AI — Space" }}</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <style>
+    .chat-log { max-height: 60vh; overflow-y: auto; border: 1px solid #eee; padding: 1rem; border-radius: .5rem; background:#fff; }
+    .msg { margin-bottom: .75rem; }
+    .msg .who { font-size: .8rem; opacity: .7; margin-bottom: .25rem; }
+    .msg.user { text-align: right; }
+    .msg.user .bubble { display: inline-block; background: #e6f2ff; padding: .6rem .8rem; border-radius: .75rem; }
+    .msg.bot  .bubble { display: inline-block; background: #f6f6f6; padding: .6rem .8rem; border-radius: .75rem; }
+  </style>
 </head>
 <body>
   <main class="container">
@@ -14,9 +22,9 @@
     </header>
     {% block content %}{% endblock %}
     <footer class="mt-5">
-      <small class="text-muted">© {{ 2025 }} MF.AI</small>
+      <small class="text-muted">© 2025 MF.AI</small>
     </footer>
   </main>
+  <script src="/static/public/chat.js" defer></script>
 </body>
 </html>
-
