@@ -1,24 +1,27 @@
 # ============================================================
 # MF.AI — FastAPI
 #
-# Endpoints:
+# Endpoints principali (già pronti):
 # - /health, /db/health
 # - /login (HTML)
 # - /save-token, /clients, /tokens/active, /tokens/refresh, /tokens/expiring
 # - /oauth/callback (Instagram Business Login)
 #
+# Nuovo:
+# - /c/{slug} (spazio pubblico cliente con chat)  <-- public_ui_router
+#
 # Requisiti:
-#   .env:
+#   Variabili d'ambiente (.env in locale o pannello Koyeb in prod):
 #     - API_KEY
 #     - DATABASE_URL = postgresql+asyncpg://.../mfai   (senza querystring)
-# DB engine (app/db.py):
+#
+# Engine DB (app/db.py):
 #   create_async_engine(DATABASE_URL, connect_args={
 #     "ssl": True, "server_settings": {"search_path": "mfai_app,public"}
 #   })
 # ============================================================
 
-
-import os
+import os, json
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -34,6 +37,7 @@ from app.db import engine  # engine async verso Neon
 from app.routers import admin_api
 from app.routers.meta_webhook import router as meta_webhook_router
 from app.admin_ui.routes import router as admin_ui_router
+from app.public_ui.routes import router as public_ui_router   # <-- ROUTER PUBBLICO /c/{slug}
 
 # ----------------------------
 # App & config base
@@ -41,16 +45,21 @@ from app.admin_ui.routes import router as admin_ui_router
 APP_NAME = "MF.AI"
 app = FastAPI(title=APP_NAME)
 
-# Static & routers
+# Static (serve i file sotto /static, es. /static/client-chat.js)
 app.mount("/static", StaticFiles(directory="app/admin_ui/static"), name="static")
-app.include_router(admin_api.router)          # API amministrative (JSON)
-app.include_router(meta_webhook_router)       # Webhook Meta (GET verify + POST eventi)
-app.include_router(admin_ui_router)           # Admin UI
 
-# Templates (HTML)
+# Routers
+app.include_router(admin_api.router)        # API amministrative (JSON)
+app.include_router(meta_webhook_router)     # Webhook Meta (GET verify + POST eventi)
+app.include_router(admin_ui_router)         # Admin UI (Basic auth)
+app.include_router(public_ui_router)        # <-- Spazio pubblico cliente /c/{slug}
+
+# Templates (HTML pagine pubbliche / login)
 templates = Jinja2Templates(directory="app/templates")
 
+# ----------------------------
 # CORS (restringi ai domini di produzione)
+# ----------------------------
 ALLOWED_ORIGINS = [
     "https://mid-ranna-soluzionidigitaliroma-f8d1ef2a.koyeb.app",
     "https://api.soluzionidigitali.roma.it",
@@ -63,7 +72,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ----------------------------
 # Security headers (middleware)
+# ----------------------------
 @app.middleware("http")
 async def security_headers(request, call_next):
     resp = await call_next(request)
@@ -73,12 +84,16 @@ async def security_headers(request, call_next):
         "Referrer-Policy": "no-referrer",
         "Permissions-Policy": "camera=(), geolocation=(), microphone=()",
         "Cache-Control": "no-store",
+        # HSTS: attivo solo su HTTPS (ok in prod su Koyeb)
         "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+        # CSP: consentiamo CSS da jsdelivr (Bootstrap) e immagini 'self' + data:
         "Content-Security-Policy": "default-src 'self'; style-src 'self' https://cdn.jsdelivr.net; img-src 'self' data:"
     })
     return resp
 
-# --- API Key guard ---
+# ----------------------------
+# API Key guard (per endpoint protetti lato server)
+# ----------------------------
 API_KEY = os.getenv("API_KEY", "")
 api_key_header = APIKeyHeader(name="x-api-key", auto_error=False)
 
@@ -87,7 +102,7 @@ async def require_api_key(key: str | None = Depends(api_key_header)) -> None:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 # ---------------------------------------------------------
-# Schema & indici (prefisso mfai_app.)
+# Schema base & indici (prefisso mfai_app.)
 # ---------------------------------------------------------
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS mfai_app.clients (
@@ -135,26 +150,96 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_token_per_acct
   WHERE active = TRUE;
 """
 
+# === Schema chat (assistenti / conversazioni / messaggi) ===
+SCHEMA_SQL_CHAT = """
+CREATE TABLE IF NOT EXISTS mfai_app.assistants (
+  id BIGSERIAL PRIMARY KEY,
+  client_id BIGINT NOT NULL REFERENCES mfai_app.clients(id) ON DELETE CASCADE,
+  slug TEXT NOT NULL UNIQUE,
+  display_name TEXT NOT NULL,
+  system_prompt TEXT NOT NULL,
+  style_json JSONB DEFAULT '{}'::jsonb,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS mfai_app.conversations (
+  id BIGSERIAL PRIMARY KEY,
+  assistant_id BIGINT NOT NULL REFERENCES mfai_app.assistants(id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS mfai_app.messages (
+  id BIGSERIAL PRIMARY KEY,
+  conversation_id BIGINT NOT NULL REFERENCES mfai_app.conversations(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('user','assistant','system')),
+  content TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+"""
+
 def _split_sql(sql: str):
+    """Divide un blob SQL in singoli statement (separati da ';')."""
     for part in sql.split(";"):
         stmt = part.strip()
         if stmt:
             yield stmt
 
+# Startup 1/2: schema base
 @app.on_event("startup")
 async def ensure_schema():
     async with engine.begin() as conn:
-        # 1) Assicura schema e search_path
+        # 1) Assicura schema & search_path
         await conn.exec_driver_sql("CREATE SCHEMA IF NOT EXISTS mfai_app AUTHORIZATION mfai_owner;")
         await conn.exec_driver_sql("SET search_path TO mfai_app;")
-
-        # 2) Debug identità
+        # 2) Log identità DB
         who = (await conn.execute(text("SELECT current_user, current_schema();"))).first()
         print("DB identity:", who)
-
-        # 3) Crea/aggiorna oggetti schema
+        # 3) Crea/aggiorna oggetti schema base
         for stmt in _split_sql(SCHEMA_SQL):
             await conn.exec_driver_sql(stmt)
+
+# Startup 2/2: schema chat + seed demo
+@app.on_event("startup")
+async def ensure_chat_schema():
+    async with engine.begin() as conn:
+        await conn.exec_driver_sql("SET search_path TO mfai_app;")
+        # Crea/aggiorna oggetti schema chat
+        for stmt in _split_sql(SCHEMA_SQL_CHAT):
+            await conn.exec_driver_sql(stmt)
+
+        # Seed: crea un assistente demo se la tabella è vuota
+        cnt = (await conn.execute(text("SELECT COUNT(*) FROM mfai_app.assistants"))).scalar_one()
+        if cnt == 0:
+            # Prendi un client esistente o creane uno di default
+            row = (await conn.execute(text("SELECT id FROM mfai_app.clients ORDER BY id DESC LIMIT 1"))).first()
+            if row:
+                cid = row[0]
+            else:
+                cid = (await conn.execute(
+                    text("INSERT INTO mfai_app.clients(name,email) VALUES('Default Client','default_client@example.local') RETURNING id")
+                )).scalar_one()
+
+            system_prompt = (
+                "Sei “La Dietologa”, un’assistente nutrizionale. "
+                "Rispondi in italiano, con empatia, restando su nutrizione/stile di vita. "
+                "Niente diagnosi: invita a consultare un professionista per casi clinici. "
+                "Risposte chiare e pratiche (massimo 8 frasi)."
+            )
+            style = {
+                "tone": "empatico-professionale",
+                "max_sentences": 8,
+                "use_bullets": True,
+                "disclaimer": "Queste informazioni sono generali e non sostituiscono un consulto medico."
+            }
+            await conn.execute(
+                text("""INSERT INTO mfai_app.assistants
+                        (client_id, slug, display_name, system_prompt, style_json)
+                        VALUES (:cid, 'dietologa-demo', 'La Dietologa', :sp, :style::jsonb)"""),
+                {"cid": cid, "sp": system_prompt, "style": json.dumps(style)},
+            )
+    print("Chat schema OK (assistants/conversations/messages)")
 
 # ----------------------------
 # Routes semplici
@@ -283,6 +368,7 @@ async def save_token(data: SaveTokenPayload):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"{e.__class__.__name__}: {e}")
 
+
 # ---------------------------------------------------------
 # Elenco clienti + IG account (debug rapido)
 # ---------------------------------------------------------
@@ -336,7 +422,7 @@ async def refresh_token(data: RefreshTokenPayload):
     exp = datetime.now(timezone.utc) + timedelta(days=data.expires_in_days)
 
     async with engine.begin() as conn:
-        # trova l'account IG
+        # 1) trova l'account IG
         row = (
             await conn.execute(
                 text("""
@@ -353,7 +439,7 @@ async def refresh_token(data: RefreshTokenPayload):
 
         ig_account_id = row[0]
 
-        # disattiva il token attivo esistente
+        # 2) disattiva il token attivo esistente
         await conn.execute(
             text("""
                 UPDATE mfai_app.tokens
@@ -363,7 +449,7 @@ async def refresh_token(data: RefreshTokenPayload):
             {"id": ig_account_id},
         )
 
-        # inserisci il nuovo token come attivo
+        # 3) inserisci il nuovo token come attivo
         await conn.execute(
             text("""
                 INSERT INTO mfai_app.tokens (ig_account_id, access_token, expires_at, long_lived, active)
