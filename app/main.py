@@ -35,6 +35,9 @@ from app.db import engine  # engine async verso Neon
 from app.routers import admin_api
 from app.routers.meta_webhook import router as meta_webhook_router
 from app.admin_ui.routes import router as admin_ui_router
+from app.routers import admin_prompts
+app.include_router(admin_prompts.router)
+
 
 # ----------------------------
 # App & config base
