@@ -1,20 +1,24 @@
-from app.routers.meta_webhook import router as meta_webhook_router
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from app.routers import admin_api
-app.include_router(admin_api.router)
 
 
 app = FastAPI(title="MF.AI")
-from app.routers import admin_prompts
-app.include_router(admin_prompts.router)
-app.include_router(admin_api.router)
 
+from app.routers import admin_api
+from app.routers.meta_webhook import router as meta_webhook_router
+from app.admin_ui.routes import router as admin_ui_router
+from app.routers import admin_prompts
 
 app.include_router(meta_webhook_router)
+app.include_router(admin_api.router)
+app.include_router(admin_ui_router)
+app.include_router(admin_prompts.router)
+
+
+
 
 templates = Jinja2Templates(directory="app/templates")
 
