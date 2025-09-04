@@ -1,21 +1,6 @@
-# app/main.py
+# app/main.py (testa + startup corretti)
 # ============================================================
 # MF.AI — FastAPI
-#
-# Endpoints:
-# - /health, /db/health
-# - /login (HTML)
-# - /save-token, /clients, /tokens/active, /tokens/refresh, /tokens/expiring
-# - /oauth/callback (Instagram Business Login)
-#
-# Requisiti:
-#   .env:
-#     - API_KEY
-#     - DATABASE_URL = postgresql+asyncpg://.../mfai   (senza querystring)
-# DB engine (app/db.py):
-#   create_async_engine(DATABASE_URL, connect_args={
-#     "ssl": True, "server_settings": {"search_path": "mfai_app,public"}
-#   })
 # ============================================================
 
 import os
@@ -32,12 +17,6 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from app.db import engine  # engine async verso Neon
-from app.routers import admin_api
-from app.routers.meta_webhook import router as meta_webhook_router
-from app.admin_ui.routes import router as admin_ui_router
-from app.routers import admin_prompts
-app.include_router(admin_prompts.router)
-
 
 # ----------------------------
 # App & config base
@@ -45,14 +24,21 @@ app.include_router(admin_prompts.router)
 APP_NAME = "MF.AI"
 app = FastAPI(title=APP_NAME)
 
+# ---- importa e monta i router SOLO DOPO aver creato 'app' ----
+from app.routers import admin_api
+from app.routers.meta_webhook import router as meta_webhook_router
+from app.admin_ui.routes import router as admin_ui_router
+from app.routers import admin_prompts
+
 # Static (monta solo se esiste la cartella per evitare errori in deploy)
 if os.path.isdir("app/admin_ui/static"):
     app.mount("/static", StaticFiles(directory="app/admin_ui/static"), name="static")
 
 # Routers principali
-app.include_router(admin_api.router)     # API amministrative (JSON)
-app.include_router(meta_webhook_router)  # Webhook Meta (GET verify + POST eventi)
-app.include_router(admin_ui_router)      # Admin UI (Basic Auth)
+app.include_router(meta_webhook_router)   # Webhook Meta (GET verify + POST eventi)
+app.include_router(admin_api.router)      # API amministrative (JSON)
+app.include_router(admin_ui_router)       # Admin UI (Basic Auth)
+app.include_router(admin_prompts.router)  # NEW: /admin/prompts
 
 # Public UI (/c/*) — import "safe" (se manca il modulo non blocca il deploy)
 try:
@@ -101,7 +87,6 @@ async def security_headers(request: Request, call_next):
 # --- API Key guard ---
 API_KEY = os.getenv("API_KEY", "")
 api_key_header = APIKeyHeader(name="x-api-key", auto_error=False)
-
 
 async def require_api_key(key: Optional[str] = Depends(api_key_header)) -> None:
     if not API_KEY or key != API_KEY:
@@ -154,8 +139,8 @@ CREATE INDEX IF NOT EXISTS idx_ig_accounts_client
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_token_per_acct
   ON mfai_app.tokens(ig_account_id)
   WHERE active = TRUE;
- 
- -- Spazi pubblici per cliente (/c/{slug})
+
+-- Spazi pubblici per cliente (/c/{slug})
 CREATE TABLE IF NOT EXISTS mfai_app.public_spaces (
   id BIGSERIAL PRIMARY KEY,
   client_id BIGINT NOT NULL REFERENCES mfai_app.clients(id) ON DELETE CASCADE,
@@ -174,16 +159,13 @@ CREATE INDEX IF NOT EXISTS idx_public_spaces_client
 
 CREATE INDEX IF NOT EXISTS idx_public_spaces_active
   ON mfai_app.public_spaces(active);
- 
 """
-
 
 def _split_sql(sql: str):
     for part in sql.split(";"):
         stmt = part.strip()
         if stmt:
             yield stmt
-
 
 @app.on_event("startup")
 async def ensure_schema():
@@ -201,7 +183,8 @@ async def ensure_schema():
         # 3) Crea/aggiorna oggetti schema
         for stmt in _split_sql(SCHEMA_SQL):
             await conn.exec_driver_sql(stmt)
-                # 4) Seed demo (opzionale per dev)
+
+        # 4) Seed demo (opzionale per dev)
         if os.getenv("PUBLIC_SEED_DEMO", "1") == "1":
             await conn.exec_driver_sql("""
             DO $$
@@ -230,6 +213,7 @@ async def ensure_schema():
                     active = TRUE;
             END $$;
             """)
+
     
 
 # ----------------------------
