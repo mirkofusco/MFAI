@@ -1,8 +1,7 @@
 from typing import Dict
 import time
-from sqlalchemy.orm import Session
-from sqlalchemy import select
-from app.models import Prompt
+from sqlalchemy import text
+from app.db import engine  # async engine verso Neon
 
 _CACHE: Dict[str, str] = {}
 _CACHE_TS: float = 0.0
@@ -18,36 +17,40 @@ _DEFAULTS = {
     "LEGAL_DISCLAIMER": "Le informazioni fornite hanno scopo informativo e non sostituiscono pareri ufficiali.",
 }
 
-def _refresh_cache(db: Session):
+async def _refresh_cache():
     global _CACHE, _CACHE_TS
-    rows = db.execute(select(Prompt.key, Prompt.value)).all()
+    async with engine.connect() as conn:
+        rows = (await conn.execute(text("SELECT key, value FROM mfai_app.prompts"))).all()
     _CACHE = {k: v for k, v in rows} if rows else {}
     _CACHE_TS = time.time()
 
-def get_prompt(db: Session, key: str) -> str:
+async def get_prompt(key: str) -> str:
     now = time.time()
     if not _CACHE or (now - _CACHE_TS) > _TTL_SEC:
-        _refresh_cache(db)
+        await _refresh_cache()
     return _CACHE.get(key) or _DEFAULTS.get(key, "")
 
-def list_prompts(db: Session) -> Dict[str, str]:
+async def list_prompts() -> Dict[str, str]:
     now = time.time()
     if not _CACHE or (now - _CACHE_TS) > _TTL_SEC:
-        _refresh_cache(db)
+        await _refresh_cache()
     merged = dict(_DEFAULTS)
     merged.update(_CACHE)
     return merged
 
-def upsert_prompt(db: Session, key: str, value: str) -> str:
+async def upsert_prompt(key: str, value: str) -> str:
     key = key.strip().upper()
     value = value.strip()
     if not key or not value:
         raise ValueError("key e value sono obbligatori")
-    existing = db.execute(select(Prompt).where(Prompt.key == key)).scalar_one_or_none()
-    if existing:
-        existing.value = value
-    else:
-        db.add(Prompt(key=key, value=value))
-    db.commit()
-    _refresh_cache(db)
+    async with engine.begin() as conn:
+        await conn.execute(
+            text("""
+                INSERT INTO mfai_app.prompts(key, value)
+                VALUES (:k, :v)
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+            """),
+            {"k": key, "v": value},
+        )
+    await _refresh_cache()
     return key

@@ -1,21 +1,22 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from app.schemas.prompts import PromptUpdate
-from app.services.prompts import list_prompts, upsert_prompt
-from app.database import get_db
+from pydantic import BaseModel, Field
 from app.security_admin import verify_admin
+from app.services.prompts import list_prompts, upsert_prompt
 
 router = APIRouter(prefix="/admin/prompts", tags=["admin:prompts"])
 
+class PromptUpdate(BaseModel):
+    value: str = Field(..., min_length=1, max_length=5000)
+
 @router.get("", dependencies=[Depends(verify_admin)])
-def get_prompts(db: Session = Depends(get_db)):
-    data = list_prompts(db)
+async def get_prompts():
+    data = await list_prompts()
     return [{"key": k, "value": v} for k, v in sorted(data.items())]
 
 @router.put("/{key}", dependencies=[Depends(verify_admin)])
-def put_prompt(key: str, body: PromptUpdate, db: Session = Depends(get_db)):
+async def put_prompt(key: str, body: PromptUpdate):
     try:
-        saved_key = upsert_prompt(db, key, body.value)
+        saved_key = await upsert_prompt(key, body.value)
         return {"ok": True, "key": saved_key}
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
