@@ -9,6 +9,8 @@ app.include_router(admin_api.router)
 
 
 app = FastAPI(title="MF.AI")
+from app.routers import admin_prompts
+app.include_router(admin_prompts.router)
 app.include_router(admin_api.router)
 
 
@@ -54,5 +56,3 @@ async def save_token(request: Request):
         f.write(token)
     return JSONResponse(content={"status": "success"})
 
-from app.routers import admin_prompts
-app.include_router(admin_prompts.router)
