@@ -2,7 +2,7 @@ from typing import Dict
 import time
 from sqlalchemy.orm import Session
 from sqlalchemy import select
-from app.models.prompt import Prompt
+from app.models import Prompt
 
 _CACHE: Dict[str, str] = {}
 _CACHE_TS: float = 0.0
