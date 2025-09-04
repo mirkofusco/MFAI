@@ -1,126 +1,29 @@
-<!doctype html>
-<html lang="it">
-<head>
-  <meta charset="utf-8"/>
-  <title>MF.AI — Admin Prompts</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
-  <style>
-    textarea { width:100%; min-height: 160px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .key { font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .muted { color:#666; font-size:.9rem; }
-  </style>
-</head>
-<body class="container">
-  <header>
-    <h2>MF.AI — Admin Prompts</h2>
-    <p class="muted">Modifica i testi senza deploy. Autenticazione: Basic (admin).</p>
-    <nav><a href="/admin" role="button" class="secondary">← Torna alla Home Admin</a></nav>
-  </header>
-
-  <main>
-    <article>
-      <h3>Elenco</h3>
-      <div id="list">Caricamento…</div>
-    </article>
-  </main>
-
-  <dialog id="editDialog">
-    <article>
-      <header>
-        <h4 id="dlgTitle">Modifica</h4>
-      </header>
-      <label>Testo
-        <textarea id="dlgValue"></textarea>
-      </label>
-      <footer>
-        <button id="saveBtn">Salva</button>
-        <button class="secondary" id="cancelBtn">Annulla</button>
-      </footer>
-    </article>
-  </dialog>
-
+<!doctype html><html lang="it"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>MF.AI — Admin Prompts</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+<style>textarea{width:100%;min-height:160px;font-family:ui-monospace,Menlo,monospace}.key{font-weight:600;font-family:ui-monospace,Menlo,monospace}.muted{color:#666;font-size:.9rem}</style>
+</head><body class="container">
+<header><h2>MF.AI — Admin Prompts</h2><p class="muted">Modifica i testi senza deploy. Autenticazione: Basic (admin).</p>
+<nav><a href="/ui" role="button" class="secondary">← Torna all’Admin</a></nav></header>
+<main><article><h3>Elenco</h3><div id="list">Caricamento…</div></article></main>
+<dialog id="editDialog"><article><header><h4 id="dlgTitle">Modifica</h4></header>
+<label>Testo<textarea id="dlgValue"></textarea></label>
+<footer><button id="saveBtn">Salva</button><button class="secondary" id="cancelBtn">Annulla</button></footer></article></dialog>
 <script>
-const BASE = location.origin;
-const BASIC = 'Basic ' + btoa('admin:' + prompt('Password admin:',''));
-
-const elList = document.getElementById('list');
-const dlg = document.getElementById('editDialog');
-const dlgValue = document.getElementById('dlgValue');
-const dlgTitle = document.getElementById('dlgTitle');
-const btnSave = document.getElementById('saveBtn');
-const btnCancel = document.getElementById('cancelBtn');
-
-let currentKey = null;
-
-async function apiList() {
-  const res = await fetch(`${BASE}/admin/prompts`, { headers: { Authorization: BASIC }});
-  if (!res.ok) throw new Error('Errore lista: ' + res.status);
-  return res.json();
-}
-
-async function apiPut(key, value) {
-  const res = await fetch(`${BASE}/admin/prompts/${encodeURIComponent(key)}`, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: BASIC
-    },
-    body: JSON.stringify({ value })
-  });
-  if (!res.ok) throw new Error('Errore salvataggio: ' + res.status);
-  return res.json();
-}
-
-function renderList(items) {
-  const rows = items.map(it => `
-    <tr>
-      <td class="key">${it.key}</td>
-      <td><pre style="white-space:pre-wrap;margin:0;">${escapeHtml(it.value)}</pre></td>
-      <td style="width:1%;"><button data-key="${it.key}" class="secondary">Modifica</button></td>
-    </tr>
-  `).join('');
-  elList.innerHTML = `
-    <table role="grid">
-      <thead><tr><th>Key</th><th>Value</th><th></th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>`;
-  for (const btn of elList.querySelectorAll('button[data-key]')) {
-    btn.addEventListener('click', () => openEdit(btn.dataset.key, items));
-  }
-}
-
-function openEdit(key, items) {
-  currentKey = key;
-  const it = items.find(x => x.key === key);
-  dlgTitle.textContent = 'Modifica: ' + key;
-  dlgValue.value = it?.value || '';
-  dlg.showModal();
-  dlgValue.focus();
-}
-
-btnSave.addEventListener('click', async () => {
-  try {
-    await apiPut(currentKey, dlgValue.value);
-    dlg.close();
-    init(); // ricarica lista
-  } catch (e) { alert(e); }
-});
-btnCancel.addEventListener('click', () => dlg.close());
-
-function escapeHtml(s) {
-  return s.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-}
-
-async function init() {
-  try {
-    const items = await apiList();
-    renderList(items);
-  } catch (e) {
-    elList.innerHTML = '<mark>Errore: ' + String(e) + '</mark>';
-  }
-}
+const BASE=location.origin;const BASIC='Basic '+btoa('admin:'+prompt('Password admin:',''));
+const elList=document.getElementById('list');const dlg=document.getElementById('editDialog');
+const dlgValue=document.getElementById('dlgValue');const dlgTitle=document.getElementById('dlgTitle');
+let currentKey=null;
+async function apiList(){const r=await fetch(`${BASE}/admin/prompts`,{headers:{Authorization:BASIC}});if(!r.ok)throw new Error('Errore lista: '+r.status);return r.json()}
+async function apiPut(k,v){const r=await fetch(`${BASE}/admin/prompts/${encodeURIComponent(k)}`,{method:'PUT',headers:{'Content-Type':'application/json',Authorization:BASIC},body:JSON.stringify({value:v})});if(!r.ok)throw new Error('Errore salvataggio: '+r.status);return r.json()}
+function escapeHtml(s){return s.replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+function renderList(items){elList.innerHTML=`<table role="grid"><thead><tr><th>Key</th><th>Value</th><th></th></tr></thead><tbody>${
+items.map(it=>`<tr><td class="key">${it.key}</td><td><pre style="white-space:pre-wrap;margin:0;">${escapeHtml(it.value)}</pre></td><td style="width:1%;"><button data-k="${it.key}" class="secondary">Modifica</button></td></tr>`).join('')
+}</tbody></table>`;elList.querySelectorAll('button[data-k]').forEach(b=>b.onclick=()=>openEdit(b.dataset.k,items))}
+function openEdit(key,items){currentKey=key;const it=items.find(x=>x.key===key);dlgTitle.textContent='Modifica: '+key;dlgValue.value=it?.value||'';dlg.showModal();dlgValue.focus()}
+document.getElementById('saveBtn').onclick=async()=>{await apiPut(currentKey,dlgValue.value);dlg.close();init()}
+document.getElementById('cancelBtn').onclick=()=>dlg.close();
+async function init(){try{renderList(await apiList())}catch(e){elList.innerHTML='<mark>Errore: '+String(e)+'</mark>'}}
 init();
-</script>
-</body>
-</html>
+</script></body></html>

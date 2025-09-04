@@ -1,4 +1,6 @@
 import os
+from fastapi import Request
+from fastapi.templating import Jinja2Templates
 import secrets
 from typing import Any, Dict, List
 from datetime import datetime, timezone
@@ -161,3 +163,9 @@ from app.security_admin import verify_admin
 @router.get("/admin/prompts-ui", response_class=HTMLResponse, dependencies=[Depends(verify_admin)])
 def admin_prompts_ui(request: Request):
     return templates.TemplateResponse("admin_prompts.html", {"request": request})
+
+@router.get("/prompts-ui", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
+def admin_prompts_ui(request: Request):
+    templates = Jinja2Templates(directory="app/templates")
+    return templates.TemplateResponse("admin_prompts.html", {"request": request})
+
