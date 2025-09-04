@@ -159,6 +159,17 @@ CREATE INDEX IF NOT EXISTS idx_public_spaces_client
 
 CREATE INDEX IF NOT EXISTS idx_public_spaces_active
   ON mfai_app.public_spaces(active);
+
+-- Prompts specifici per cliente
+CREATE TABLE IF NOT EXISTS mfai_app.client_prompts (
+  id BIGSERIAL PRIMARY KEY,
+  client_id BIGINT NOT NULL REFERENCES mfai_app.clients(id) ON DELETE CASCADE,
+  key TEXT NOT NULL,
+  value TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (client_id, key)
+);
+
 """
 
 def _split_sql(sql: str):
@@ -561,3 +572,6 @@ async def admin_client_overview(client_id: int):
       "public_spaces": spaces,
       "active_tokens": tokens
     }
+
+from app.routers import admin_client_prompts
+app.include_router(admin_client_prompts.router)

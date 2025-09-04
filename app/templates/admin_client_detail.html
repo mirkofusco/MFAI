@@ -38,6 +38,12 @@
       <h3>Spazi pubblici</h3>
       <div id="spaces">Caricamento…</div>
     </article>
+  
+    <article>
+      <h3>Prompts (cliente)</h3>
+      <p class="muted">Questi valori sovrascrivono i globali per questo cliente.</p>
+      <div id="client_prompts">Caricamento…</div>
+    </article>
   </main>
 
   <script>
@@ -87,9 +93,52 @@
       `).join('')}
       </tbody></table>`;
   }
-  (async()=>{ try{ render(await getOverview()); } catch(e){ 
-    document.getElementById('overview').innerHTML = '<mark>'+String(e)+'</mark>'; 
+  
+  async function getClientPrompts(){
+    const r = await fetch('/admin/client/'+CID+'/prompts', { headers: { Authorization: BASIC }});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.json();
+  }
+  async function putClientPrompt(key, value){
+    const r = await fetch('/admin/client/'+CID+'/prompts/'+encodeURIComponent(key), {
+      method:'PUT', headers:{'Content-Type':'application/json', Authorization:BASIC},
+      body: JSON.stringify({value})
+    });
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.json();
+  }
+  async function renderClientPrompts(){
+    try{
+      const items = await getClientPrompts();
+      const rows = items.map(it => `
+        <tr>
+          <td><code>${esc(it.key)}</code></td>
+          <td><pre style="white-space:pre-wrap;margin:0;">${esc(it.value)}</pre></td>
+          <td style="width:1%;">
+            <button data-k="${esc(it.key)}">Modifica</button>
+          </td>
+        </tr>`).join('');
+      document.getElementById('client_prompts').innerHTML = `
+        <table role="grid"><thead><tr><th>Key</th><th>Value</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table>`;
+      document.querySelectorAll('#client_prompts button[data-k]').forEach(btn=>{
+        btn.onclick = async () => {
+          const k = btn.dataset.k;
+          const current = prompt('Nuovo valore per '+k+':', '');
+          if (current !== null) {
+            await putClientPrompt(k, current);
+            renderClientPrompts();
+          }
+        };
+      });
+    }catch(e){
+      document.getElementById('client_prompts').innerHTML = '<mark>'+String(e)+'</mark>';
+    }
+  }
+  (async()=>{ try{ render(await getOverview()); await renderClientPrompts(); } catch(e){
+    document.getElementById('overview').innerHTML = '<mark>'+String(e)+'</mark>';
   }})();
+
   </script>
 </body>
 </html>
