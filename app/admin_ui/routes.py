@@ -153,3 +153,11 @@ async def ui_refresh_token(
     resp.raise_for_status()
     return RedirectResponse(url="/ui/clients", status_code=303)
 
+
+# --- Prompts Admin (pagina HTML) ---
+from fastapi import Depends
+from app.security_admin import verify_admin
+
+@router.get("/admin/prompts-ui", response_class=HTMLResponse, dependencies=[Depends(verify_admin)])
+def admin_prompts_ui(request: Request):
+    return templates.TemplateResponse("admin_prompts.html", {"request": request})
