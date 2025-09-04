@@ -169,3 +169,11 @@ def admin_prompts_ui(request: Request):
     templates = Jinja2Templates(directory="app/templates")
     return templates.TemplateResponse("admin_prompts.html", {"request": request})
 
+
+@router.get("/clients", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
+def admin_clients_page(request: Request):
+    return templates.TemplateResponse("admin_clients.html", {"request": request})
+
+@router.get("/clients/{client_id}", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
+def admin_client_detail(request: Request, client_id: int):
+    return templates.TemplateResponse("admin_client_detail.html", {"request": request, "client_id": client_id})

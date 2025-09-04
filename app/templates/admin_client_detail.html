@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8"/>
+  <title>MF.AI — Scheda cliente</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <style>
+    code, pre { font-family: ui-monospace, Menlo, monospace; }
+    .muted{color:#666}
+    .grid { display:grid; gap:1rem; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+    .pill { padding:.25rem .5rem; border-radius: 999px; font-size:.8rem; }
+    .ok { background:#e7f7ec; }
+    .warn { background:#fff3cd; }
+  </style>
+</head>
+<body class="container">
+  <header>
+    <h2>MF.AI — Scheda cliente <span id="title"></span></h2>
+    <nav>
+      <a href="/ui/clients" role="button" class="secondary">← Elenco clienti</a>
+      <a href="/ui/prompts-ui" role="button">🧩 Prompts</a>
+    </nav>
+  </header>
+
+  <main>
+    <article>
+      <h3>Overview</h3>
+      <div id="overview">Caricamento…</div>
+    </article>
+
+    <article>
+      <h3>Instagram accounts</h3>
+      <div id="iglist">Caricamento…</div>
+    </article>
+
+    <article>
+      <h3>Spazi pubblici</h3>
+      <div id="spaces">Caricamento…</div>
+    </article>
+  </main>
+
+  <script>
+  const BASIC = 'Basic ' + btoa('admin:' + prompt('Password admin:',''));
+  const CID = {{ client_id }};
+  function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]) )}
+  async function getOverview(){
+    const r = await fetch('/admin/client/'+CID+'/overview', { headers: { Authorization: BASIC }});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.json();
+  }
+  function render(data){
+    const t = document.getElementById('title');
+    t.textContent = `#${data.client.id} — ${data.client.name}`;
+    document.getElementById('overview').innerHTML = `
+      <ul>
+        <li><strong>Email:</strong> ${esc(data.client.email)}</li>
+        <li><strong>Creato:</strong> ${esc(data.client.created_at)}</li>
+        <li><strong>IG accounts:</strong> ${data.ig_accounts.length}</li>
+        <li><strong>Spazi pubblici:</strong> ${data.public_spaces.length}</li>
+      </ul>`;
+    const mapToken = new Map((data.active_tokens||[]).map(x=>[x.ig_account_id, x.expires_at]));
+    document.getElementById('iglist').innerHTML = `
+      <table role="grid"><thead><tr><th>ID</th><th>User</th><th>IG User ID</th><th>Attivo</th><th>Token attivo scade</th></tr></thead>
+      <tbody>
+      ${data.ig_accounts.map(a=>`
+        <tr>
+          <td>${a.id}</td>
+          <td>${esc(a.username)}</td>
+          <td><code>${esc(a.ig_user_id)}</code></td>
+          <td>${a.active ? '<span class="pill ok">attivo</span>' : '<span class="pill warn">OFF</span>'}</td>
+          <td>${esc(mapToken.get(a.id) || '')}</td>
+        </tr>
+      `).join('')}
+      </tbody></table>`;
+    document.getElementById('spaces').innerHTML = `
+      <table role="grid"><thead><tr><th>ID</th><th>Slug</th><th>Titolo</th><th>Attivo</th><th>Aggiornato</th></tr></thead>
+      <tbody>
+      ${data.public_spaces.map(s=>`
+        <tr>
+          <td>${s.id}</td>
+          <td><code>${esc(s.slug)}</code></td>
+          <td>${esc(s.title)}</td>
+          <td>${s.active ? '<span class="pill ok">ON</span>' : '<span class="pill warn">OFF</span>'}</td>
+          <td>${esc(s.updated_at)}</td>
+        </tr>
+      `).join('')}
+      </tbody></table>`;
+  }
+  (async()=>{ try{ render(await getOverview()); } catch(e){ 
+    document.getElementById('overview').innerHTML = '<mark>'+String(e)+'</mark>'; 
+  }})();
+  </script>
+</body>
+</html>

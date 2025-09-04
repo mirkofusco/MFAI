@@ -495,3 +495,69 @@ async def tokens_expiring(days: int = 10):
     async with engine.connect() as conn:
         rows = (await conn.execute(q, {"threshold": threshold})).mappings().all()
     return {"items": rows}
+
+# --- Admin JSON: elenco clienti (id, name, email, counts) ---
+from fastapi import Depends
+from app.security_admin import verify_admin
+
+@app.get("/admin/clients_list", dependencies=[Depends(verify_admin)])
+async def admin_clients_list():
+    q = text("""
+      SELECT
+        c.id,
+        c.name,
+        c.email,
+        COALESCE((
+          SELECT COUNT(*) FROM mfai_app.instagram_accounts ia WHERE ia.client_id = c.id
+        ),0) AS ig_accounts,
+        COALESCE((
+          SELECT COUNT(*) FROM mfai_app.public_spaces ps WHERE ps.client_id = c.id
+        ),0) AS public_spaces
+      FROM mfai_app.clients c
+      ORDER BY c.id DESC
+      LIMIT 500
+    """)
+    async with engine.connect() as conn:
+        rows = (await conn.execute(q)).mappings().all()
+    return {"items": rows}
+
+# --- Admin JSON: dettaglio cliente (overview) ---
+@app.get("/admin/client/{client_id}/overview", dependencies=[Depends(verify_admin)])
+async def admin_client_overview(client_id: int):
+    async with engine.connect() as conn:
+        client = (await conn.execute(text("""
+          SELECT id, name, email, created_at
+          FROM mfai_app.clients WHERE id = :cid
+        """), {"cid": client_id})).mappings().first()
+
+        if not client:
+            raise HTTPException(status_code=404, detail="Cliente non trovato")
+
+        ig_accounts = (await conn.execute(text("""
+          SELECT id, ig_user_id, username, active, created_at
+          FROM mfai_app.instagram_accounts
+          WHERE client_id = :cid
+          ORDER BY id DESC
+        """), {"cid": client_id})).mappings().all()
+
+        spaces = (await conn.execute(text("""
+          SELECT id, slug, title, active, updated_at
+          FROM mfai_app.public_spaces
+          WHERE client_id = :cid
+          ORDER BY id DESC
+        """), {"cid": client_id})).mappings().all()
+
+        # token attivi per ogni IG account (mappa {ig_account_id: expires_at})
+        tokens = (await conn.execute(text("""
+          SELECT t.ig_account_id, t.expires_at
+          FROM mfai_app.tokens t
+          WHERE t.active = TRUE
+            AND t.ig_account_id IN (SELECT id FROM mfai_app.instagram_accounts WHERE client_id = :cid)
+        """), {"cid": client_id})).mappings().all()
+
+    return {
+      "client": client,
+      "ig_accounts": ig_accounts,
+      "public_spaces": spaces,
+      "active_tokens": tokens
+    }
