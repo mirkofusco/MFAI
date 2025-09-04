@@ -56,3 +56,4 @@ async def save_token(request: Request):
         f.write(token)
     return JSONResponse(content={"status": "success"})
 
+# redeploy trigger
