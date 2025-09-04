@@ -53,3 +53,6 @@ async def save_token(request: Request):
     with open("access_token.txt", "w") as f:
         f.write(token)
     return JSONResponse(content={"status": "success"})
+
+from app.routers import admin_prompts
+app.include_router(admin_prompts.router)
