@@ -1,3 +1,4 @@
+from typing import Optional
 from fastapi import APIRouter, Depends  # Per creare le rotte e gestire le dipendenze
 from sqlalchemy.orm import Session      # Per gestire la sessione del database
 from app.database import get_db         # Connessione al DB
@@ -15,7 +16,7 @@ def create_client(client: models.ClientCreate, db: Session = Depends(get_db)):
     - `client`: dati ricevuti dal corpo della richiesta
     - `db`: connessione al database, fornita automaticamente
     """
-    db_client = models.Client(**client.dict())
+    db_client = models.Client(**client.dict(, ai_prompt=data.ai_prompt))
     db.add(db_client)
     db.commit()
     db.refresh(db_client)

@@ -33,3 +33,45 @@ function escapeHtml(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':
     listEl.innerHTML = '<mark>'+String(e)+'</mark>';
   }
 })();
+
+
+;(() => {
+  const ta = document.getElementById('ai_prompt');
+  const statusEl = document.getElementById('ai-prompt-status');
+  if (!ta) return;
+
+  async function loadClientAI() {
+    try {
+      statusEl && (statusEl.textContent = 'Caricamento...');
+      const res = await fetch(`/api/clients/${window.CURRENT_CLIENT_ID}`, { credentials: 'include' });
+      if (!res.ok) throw new Error('GET /api/clients/:id failed');
+      const data = await res.json();
+      ta.value = data.ai_prompt || '';
+      statusEl && (statusEl.textContent = 'Pronto');
+    } catch (e) {
+      statusEl && (statusEl.textContent = 'Errore caricamento');
+      console.error(e);
+    }
+  }
+
+  async function saveClientAI() {
+    try {
+      statusEl && (statusEl.textContent = 'Salvataggio...');
+      const res = await fetch(`/api/clients/${window.CURRENT_CLIENT_ID}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ ai_prompt: ta.value })
+      });
+      if (!res.ok) throw new Error('PATCH /api/clients/:id failed');
+      statusEl && (statusEl.textContent = 'Salvato');
+      setTimeout(() => { if(statusEl) statusEl.textContent=''; }, 1200);
+    } catch (e) {
+      statusEl && (statusEl.textContent = 'Errore salvataggio');
+      console.error(e);
+    }
+  }
+
+  document.getElementById('btn-save-ai-prompt')?.addEventListener('click', saveClientAI);
+  loadClientAI();
+})();

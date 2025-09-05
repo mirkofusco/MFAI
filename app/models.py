@@ -11,6 +11,7 @@ class Client(Base):
     instagram_username = Column(String, unique=True)
     api_key = Column(String)
     active = Column(Boolean, default=True)
+    ai_prompt = Column(Text, nullable=True)
 
 # ✅ Schema Pydantic per ricevere i dati in POST
 class ClientCreate(BaseModel):
