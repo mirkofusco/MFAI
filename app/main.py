@@ -1,12 +1,12 @@
 # ============================================================
-# MF.AI — FastAPI (main.py) — UI /ui2 + Prompts + Bot buttons
+# MF.AI — FastAPI (main.py) — UI /ui2 + Prompts + Bot FIX
 # ============================================================
 
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, Body, Query
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -64,7 +64,7 @@ def ui2_css():
 input[type="text"],textarea{width:100%;padding:10px;border-radius:10px;border:1px solid var(--border);background:#0d1322;color:var(--text);font:13px}
 button{padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--btn);color:var(--text);cursor:pointer}
 button.primary{outline:1px solid var(--accent)}
-button.danger{border-color:rgba(239,68,68,.4)}button.danger:hover{filter:brightness(1.1)}
+button.danger{border-color:rgba(239,68,68,.4)}
 button:hover{filter:brightness(1.1)}
 .chip{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid var(--border);border-radius:999px;font-size:12px}
 .chip.ok{background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.3);color:var(--ok)}
@@ -84,21 +84,19 @@ def ui2_js():
     return Response(
         r"""
 (function(){
-  // API endpoints — prompts e bot usano route /ui2/*
+  // API endpoints — TUTTO qui: /admin/accounts GET+PATCH per BOT
   const api={
     clients:'/admin/clients',
-    accounts:'/admin/accounts', // se assente, lo gestiamo via /ui2/accounts/bot
+    accounts:'/admin/accounts',       // <-- definito in questo file (GET, PATCH)
     tokens:'/admin/tokens',
     logs:'/admin/logs',
-    prompts:(cid)=>`/ui2/prompts/${cid}`,
-    botGet:(id)=>`/ui2/accounts/bot?ig_user_id=${encodeURIComponent(id)}`,
-    botSet:'/ui2/accounts/bot',
+    prompts:(cid)=>`/ui2/prompts/${cid}`,  // <-- definito in questo file (GET, PUT)
     adminUI:'/admin/ui'
   };
 
   const state={clients:[],accounts:[],tokens:[],selected:null};
   const $=(s,el=document)=>el.querySelector(s);
-  const esc=(s)=> (s??"").replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[m]));
+  const esc=(s)=> (s??"").replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;","\">":"&gt;"}[m]));
 
   async function j(u,o={}){const r=await fetch(u,{...o,credentials:'include'});if(!r.ok){const t=await r.text().catch(()=> "");throw new Error(`HTTP ${r.status} ${r.statusText} on ${u}\n${t}`);}return r.json();}
 
@@ -129,7 +127,7 @@ def ui2_js():
   async function boot(){
     try{
       $('#hint').textContent='Carico…';
-      const [c,a,t]=await Promise.all([j(api.clients),j(api.accounts).catch(()=>([])),j(api.tokens).catch(()=>([]))]);
+      const [c,a,t]=await Promise.all([j(api.clients),j(api.accounts),j(api.tokens).catch(()=>[])]);
       state.clients=c; state.accounts=a; state.tokens=t;
       renderList(); $('#hint').textContent=`Clienti: ${c.length}`;
       $('#q').addEventListener('input',e=>renderList(e.target.value));
@@ -149,27 +147,13 @@ def ui2_js():
     if(items.length===0) box.innerHTML='<div class="card empty">Nessun risultato</div>';
   }
 
-  async function ensureBotFlag(acc){
-    if(!acc?.ig_user_id) return acc;
-    // se manca bot_enabled, leggilo dal nostro endpoint
-    if(typeof acc.bot_enabled === 'undefined'){
-      try{
-        const s = await j(api.botGet(acc.ig_user_id));
-        acc.bot_enabled = !!s.enabled;
-      }catch(_e){ acc.bot_enabled = false; }
-    }
-    return acc;
-  }
-
   async function select(clientId){
     try{
       state.selected=clientId; renderList($('#q').value||'');
       const c=state.clients.find(x=>x.id===clientId);
-      let acc=state.accounts.find(a=>a.client_id===clientId);
+      const acc=state.accounts.find(a=>a.client_id===clientId);
       $('#crumb').textContent=c?.name||c?.company||('Cliente #'+clientId);
       $('#hint').textContent='Carico scheda…';
-
-      if(acc) acc = await ensureBotFlag(acc);
 
       let prompts=null, promptsErr=null, logs=[];
       try{ prompts=await j(api.prompts(clientId)); }catch(e){ promptsErr=String(e); }
@@ -198,13 +182,13 @@ def ui2_js():
     const botChip = acc?.bot_enabled ? `<span id="botchip" class="chip ok">ON</span>` : `<span id="botchip" class="chip bad">OFF</span>`;
 
     // BOT buttons (niente switch)
-    const botButtons = `
+    const botButtons = acc ? `
       <div class="group" id="botButtons">
         <button id="btnBotOn"  class="primary">Attiva bot</button>
         <button id="btnBotOff" class="danger">Disattiva bot</button>
         ${botChip}
         <span id="bots" class="hint"></span>
-      </div>`;
+      </div>` : '<span class="hint">Nessun account IG collegato.</span>';
 
     let promptsCard='';
     if(prompts){
@@ -227,7 +211,7 @@ def ui2_js():
           <h3>Prompt cliente</h3>
           <div class="row">
             <span class="chip neutral">Sezione disabilitata</span>
-            <span class="hint">/ui2/prompts/{client_id} non disponibile (${esc(info)}).</span>
+            <span class="hint">/ui2/prompts/{client_id} non disponibile (${info}).</span>
           </div>
           <div class="row">
             <button id="retryPrompts">Riprova</button>
@@ -246,7 +230,7 @@ def ui2_js():
           <div class="kv"><b>Stato</b> ${statusChip}</div>
         </div>
         <div class="row">
-          ${acc ? botButtons : '<span class="hint">Nessun account IG collegato.</span>'}
+          ${botButtons}
         </div>
       </div>
 
@@ -265,15 +249,23 @@ def ui2_js():
 
     const refresh=$('#refresh'); if(refresh){ refresh.onclick=()=>select(c.id); }
 
-    // BOT handlers
+    // BOT handlers — PATCH /admin/accounts {ig_user_id, bot_enabled}
     const btnOn=$('#btnBotOn'), btnOff=$('#btnBotOff'), bots=$('#bots'), botchip=$('#botchip');
     async function setBot(enabled){
       try{
         bots.textContent='…';
-        await j(api.botSet,{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({ig_user_id:acc.ig_user_id, enabled})});
+        await j(api.accounts,{
+          method:'PATCH',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({ ig_user_id: acc.ig_user_id, bot_enabled: enabled })
+        });
+        // Sync UI + stato locale
         botchip.textContent = enabled ? 'ON' : 'OFF';
         botchip.className = 'chip ' + (enabled ? 'ok' : 'bad');
         bots.textContent='Salvato';
+        // Aggiorna anche state.accounts
+        const idx = state.accounts.findIndex(a=>a.id===acc.id);
+        if(idx>-1){ state.accounts[idx].bot_enabled = enabled; }
       }catch(e){
         bots.textContent='Errore';
         console.error(e);
@@ -311,7 +303,7 @@ def ui2_js():
   function showFatal(msg){
     const app=document.getElementById('app');
     app.innerHTML=`<div style="padding:20px;font-family:system-ui"><h2>⚠️ Errore UI</h2>
-    <pre style="white-space:pre-wrap;background:#111;color:#eee;padding:12px;border-radius:8px;border:1px solid #333;max-height:50vh;overflow:auto">${esc(String(msg))}</pre></div>`;
+    <pre style="white-space:pre-wrap;background:#111;color:#eee;padding:12px;border-radius:8px;border:1px solid #333;max-height:50vh;overflow:auto">${String(msg)}</pre></div>`;
   }
 
   try { boot(); } catch (e) { showFatal(e); console.error(e); }
@@ -321,7 +313,7 @@ def ui2_js():
     )
 
 # -----------------------------------------------------------
-# Admin classico (ponte per evitare 404)
+# Admin classico (ponte)
 # -----------------------------------------------------------
 @app.get("/admin/ui", response_class=HTMLResponse)
 def admin_ui_bridge():
@@ -349,24 +341,7 @@ try:
 except Exception as e:
     print("Meta webhook router non caricato:", e)
 
-try:
-    from app.routers import admin_api
-    app.include_router(admin_api.router)
-except Exception as e:
-    print("Admin API router non caricato:", e)
-
-try:
-    from app.routers import admin_prompts
-    app.include_router(admin_prompts.router)
-except Exception as e:
-    print("Admin Prompts router non caricato:", e)
-
-try:
-    from app.admin_ui.routes import router as admin_ui_router
-    app.include_router(admin_ui_router)
-except Exception as e:
-    print("Admin UI router non caricato:", e)
-
+# (gli altri router possono esistere o no; qui non servono per il bot)
 try:
     from app.routers import admin_client_prompts
     app.include_router(admin_client_prompts.router)
@@ -421,7 +396,7 @@ async def security_headers(request: Request, call_next):
     return resp
 
 # -----------------------------------------------------------
-# API Key guard (per alcune POST/PUT)
+# API Key guard (per alcune POST/PUT opzionali)
 # -----------------------------------------------------------
 API_KEY = os.getenv("API_KEY", "")
 api_key_header = APIKeyHeader(name="x-api-key", auto_error=False)
@@ -431,7 +406,7 @@ async def require_api_key(key: Optional[str] = Depends(api_key_header)) -> None:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 # -----------------------------------------------------------
-# verify_admin (fallback)
+# verify_admin (fallback se modulo assente)
 # -----------------------------------------------------------
 try:
     from app.security_admin import verify_admin
@@ -440,7 +415,7 @@ except Exception:
         return None
 
 # -----------------------------------------------------------
-# SCHEMA SQL
+# SCHEMA SQL (con bot_enabled) + startup
 # -----------------------------------------------------------
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS mfai_app.clients (
@@ -456,7 +431,6 @@ CREATE TABLE IF NOT EXISTS mfai_app.instagram_accounts (
   ig_user_id TEXT UNIQUE NOT NULL,
   username TEXT NOT NULL,
   active BOOLEAN NOT NULL DEFAULT TRUE,
-  -- AGGIUNTA: flag bot
   bot_enabled BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT now()
 );
@@ -529,17 +503,15 @@ async def ensure_schema():
     async with engine.begin() as conn:
         await conn.exec_driver_sql("CREATE SCHEMA IF NOT EXISTS mfai_app AUTHORIZATION mfai_owner;")
         await conn.exec_driver_sql("SET search_path TO mfai_app;")
-        who = (await conn.execute(text("SELECT current_user, current_schema();"))).first()
-        print("DB identity:", who)
-        # crea tabelle/base
+        # Crea/aggiorna oggetti
         for stmt in _split_sql(SCHEMA_SQL):
             await conn.exec_driver_sql(stmt)
-        # in caso la tabella esistesse già senza colonna bot_enabled, aggiungila qui:
+        # Safety: aggiungi colonna bot_enabled se mancante
         await conn.exec_driver_sql("""
           ALTER TABLE mfai_app.instagram_accounts
           ADD COLUMN IF NOT EXISTS bot_enabled BOOLEAN NOT NULL DEFAULT FALSE;
         """)
-        # seed demo opzionale
+        # Seed demo opzionale
         if os.getenv("PUBLIC_SEED_DEMO", "1") == "1":
             await conn.exec_driver_sql("""
             DO $$
@@ -584,199 +556,54 @@ def health():
 def ping():
     return {"pong": True}
 
-@app.get("/login", response_class=HTMLResponse)
-def login_page(request: Request):
-    if not templates:
-        return HTMLResponse("<!doctype html><html><body>Login non configurato (templates mancanti).</body></html>")
-    return templates.TemplateResponse("login.html", {"request": request})
-
 @app.get("/db/health")
 async def db_health():
     async with engine.connect() as conn:
         r = await conn.execute(text("SELECT 'ok'"))
         return {"db": r.scalar_one()}
 
-# --- OAuth Callback Instagram ---
-@app.get("/oauth/callback")
-async def oauth_callback(request: Request):
-    code = request.query_params.get("code")
-    state = request.query_params.get("state")
-    if not code:
-        raise HTTPException(status_code=400, detail="Missing ?code in callback")
-    return {"status": "ok", "received_code": True, "code_preview": (code[:12] + "..."), "state": state}
-
 # -----------------------------------------------------------
-# Modelli I/O
+# Admin JSON minimi che servono alla UI
 # -----------------------------------------------------------
-class SaveTokenPayload(BaseModel):
-    token: str = Field(..., min_length=5)
-    ig_user_id: str = Field(..., min_length=3)
-    username: str = Field(..., min_length=1)
-    client_name: str = "Default Client"
-    client_email: Optional[str] = None
-    expires_at: Optional[datetime] = None  # se None -> +60 giorni
-
-class RefreshTokenPayload(BaseModel):
-    ig_user_id: str = Field(..., min_length=3)
-    token: str = Field(..., min_length=5)
-    expires_in_days: int = Field(default=60, ge=1, le=365)
-
-# -----------------------------------------------------------
-# Save token + upsert client/account/token
-# -----------------------------------------------------------
-@app.post("/save-token", dependencies=[Depends(require_api_key)])
-async def save_token(data: SaveTokenPayload):
-    try:
-        exp = data.expires_at or (datetime.now(timezone.utc) + timedelta(days=60))
-        async with engine.begin() as conn:
-            res = await conn.execute(
-                text("""
-                    INSERT INTO mfai_app.clients (name, email)
-                    VALUES (:name, COALESCE(:email, REPLACE(LOWER(:name),' ','_') || '@example.local'))
-                    ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name
-                    RETURNING id
-                """),
-                {"name": data.client_name, "email": data.client_email},
-            )
-            client_id = res.scalar_one()
-
-            res = await conn.execute(
-                text("""
-                    INSERT INTO mfai_app.instagram_accounts (client_id, ig_user_id, username, active)
-                    VALUES (:client_id, :ig_user_id, :username, TRUE)
-                    ON CONFLICT (ig_user_id) DO UPDATE
-                      SET username = EXCLUDED.username, active = TRUE
-                    RETURNING id
-                """),
-                {"client_id": client_id, "ig_user_id": data.ig_user_id, "username": data.username},
-            )
-            ig_account_id = res.scalar_one()
-
-            await conn.execute(
-                text("UPDATE mfai_app.tokens SET active = FALSE WHERE ig_account_id = :ig AND active = TRUE"),
-                {"ig": ig_account_id},
-            )
-
-            await conn.execute(
-                text("""
-                    INSERT INTO mfai_app.tokens (ig_account_id, access_token, expires_at, long_lived, active)
-                    VALUES (:ig_account_id, :token, :expires_at, TRUE, TRUE)
-                """),
-                {"ig_account_id": ig_account_id, "token": data.token, "expires_at": exp},
-            )
-
-            await conn.execute(
-                text("INSERT INTO mfai_app.message_logs (ig_account_id, direction, payload) VALUES (:id,'in',:p)"),
-                {"id": ig_account_id, "p": f"Saved token (len={len(data.token)})"},
-            )
-
-        return {"status": "ok", "client_id": client_id, "ig_account_id": ig_account_id, "expires_at": exp.isoformat()}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"{e.__class__.__name__}: {e}")
-
-# -----------------------------------------------------------
-# Utility Token
-# -----------------------------------------------------------
-@app.get("/tokens/active")
-async def get_active_token(ig_user_id: str):
-    q = text("""
-        SELECT t.access_token, t.expires_at
-        FROM mfai_app.tokens t
-        JOIN mfai_app.instagram_accounts ia ON ia.id = t.ig_account_id
-        WHERE ia.ig_user_id = :ig AND t.active = TRUE
-        ORDER BY t.created_at DESC
-        LIMIT 1
-    """)
+# 1) Clients (lista)
+@app.get("/admin/clients")
+async def admin_clients():
+    q = text("SELECT id, name, email FROM mfai_app.clients ORDER BY id DESC LIMIT 500")
     async with engine.connect() as conn:
-        row = (await conn.execute(q, {"ig": ig_user_id})).first()
-    if not row:
-        raise HTTPException(status_code=404, detail="Nessun token attivo trovato")
-    return {"ig_user_id": ig_user_id, "access_token": row[0], "expires_at": row[1]}
+        rows = (await conn.execute(q)).mappings().all()
+    return rows
 
-@app.post("/tokens/refresh", dependencies=[Depends(require_api_key)])
-async def refresh_token(data: RefreshTokenPayload):
-    exp = datetime.now(timezone.utc) + timedelta(days=data.expires_in_days)
-    async with engine.begin() as conn:
-        row = (await conn.execute(
-            text("SELECT id FROM mfai_app.instagram_accounts WHERE ig_user_id = :ig AND active = TRUE LIMIT 1"),
-            {"ig": data.ig_user_id},
-        )).first()
-        if not row:
-            raise HTTPException(status_code=404, detail="Instagram account non trovato")
-
-        ig_account_id = row[0]
-        await conn.execute(text("UPDATE mfai_app.tokens SET active = FALSE WHERE ig_account_id = :id AND active = TRUE"), {"id": ig_account_id})
-        await conn.execute(
-            text("INSERT INTO mfai_app.tokens (ig_account_id, access_token, expires_at, long_lived, active) VALUES (:ig, :token, :exp, TRUE, TRUE)"),
-            {"ig": ig_account_id, "token": data.token, "exp": exp},
-        )
-    return {"status": "ok", "ig_user_id": data.ig_user_id, "expires_at": exp.isoformat()}
-
-@app.get("/tokens/expiring")
-async def tokens_expiring(days: int = 10):
-    threshold = datetime.now(timezone.utc) + timedelta(days=days)
+# 2) Accounts (GET lista + PATCH toggle bot)
+@app.get("/admin/accounts")
+async def admin_accounts():
     q = text("""
-        SELECT ia.username, ia.ig_user_id, t.id AS token_id, t.expires_at
-        FROM mfai_app.tokens t
-        JOIN mfai_app.instagram_accounts ia ON ia.id = t.ig_account_id
-        WHERE t.active = TRUE AND t.expires_at IS NOT NULL AND t.expires_at <= :threshold
-        ORDER BY t.expires_at ASC
-        LIMIT 200
-    """)
-    async with engine.connect() as conn:
-        rows = (await conn.execute(q, {"threshold": threshold})).mappings().all()
-    return {"items": rows}
-
-# -----------------------------------------------------------
-# Admin JSON utili
-# -----------------------------------------------------------
-@app.get("/admin/clients_list", dependencies=[Depends(verify_admin)])
-async def admin_clients_list():
-    q = text("""
-      SELECT
-        c.id,
-        c.name,
-        c.email,
-        COALESCE((SELECT COUNT(*) FROM mfai_app.instagram_accounts ia WHERE ia.client_id = c.id),0) AS ig_accounts,
-        COALESCE((SELECT COUNT(*) FROM mfai_app.public_spaces ps WHERE ps.client_id = c.id),0) AS public_spaces
-      FROM mfai_app.clients c
-      ORDER BY c.id DESC
-      LIMIT 500
+      SELECT id, client_id, ig_user_id, username, active, bot_enabled, created_at
+      FROM mfai_app.instagram_accounts
+      ORDER BY id DESC
+      LIMIT 1000
     """)
     async with engine.connect() as conn:
         rows = (await conn.execute(q)).mappings().all()
-    return {"items": rows}
+    return rows
 
-@app.get("/admin/client/{client_id}/overview", dependencies=[Depends(verify_admin)])
-async def admin_client_overview(client_id: int):
-    async with engine.connect() as conn:
-        client = (await conn.execute(text("SELECT id, name, email, created_at FROM mfai_app.clients WHERE id = :cid"),
-                                     {"cid": client_id})).mappings().first()
-        if not client:
-            raise HTTPException(status_code=404, detail="Cliente non trovato")
+class PatchAccountPayload(BaseModel):
+    ig_user_id: str
+    bot_enabled: bool
 
-        ig_accounts = (await conn.execute(text("""
-          SELECT id, ig_user_id, username, active, bot_enabled, created_at
-          FROM mfai_app.instagram_accounts
-          WHERE client_id = :cid
-          ORDER BY id DESC
-        """), {"cid": client_id})).mappings().all()
-
-        spaces = (await conn.execute(text("""
-          SELECT id, slug, title, active, updated_at
-          FROM mfai_app.public_spaces
-          WHERE client_id = :cid
-          ORDER BY id DESC
-        """), {"cid": client_id})).mappings().all()
-
-        tokens = (await conn.execute(text("""
-          SELECT t.ig_account_id, t.expires_at
-          FROM mfai_app.tokens t
-          WHERE t.active = TRUE
-            AND t.ig_account_id IN (SELECT id FROM mfai_app.instagram_accounts WHERE client_id = :cid)
-        """), {"cid": client_id})).mappings().all()
-
-    return {"client": client, "ig_accounts": ig_accounts, "public_spaces": spaces, "active_tokens": tokens}
+@app.patch("/admin/accounts")
+async def admin_accounts_patch(body: PatchAccountPayload):
+    ig = body.ig_user_id.strip()
+    async with engine.begin() as conn:
+        res = await conn.execute(text("""
+          UPDATE mfai_app.instagram_accounts
+          SET bot_enabled = :flag
+          WHERE ig_user_id = :ig
+          RETURNING id
+        """), {"flag": body.bot_enabled, "ig": ig})
+        row = res.first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Instagram account non trovato")
+    return {"status": "ok", "ig_user_id": ig, "bot_enabled": body.bot_enabled}
 
 # -----------------------------------------------------------
 # Prompts endpoints dedicati per /ui2
@@ -815,41 +642,131 @@ async def ui2_put_prompts(client_id: int, body: ClientPrompts):
     return {"status": "ok"}
 
 # -----------------------------------------------------------
-# BOT endpoints dedicati per /ui2 (salvataggio certo)
+# OAuth callback (se ti serve)
 # -----------------------------------------------------------
-class BotTogglePayload(BaseModel):
-    ig_user_id: str
-    enabled: bool
+@app.get("/oauth/callback")
+async def oauth_callback(request: Request):
+    code = request.query_params.get("code")
+    state = request.query_params.get("state")
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing ?code in callback")
+    return {"status": "ok", "received_code": True, "code_preview": (code[:12] + "..."), "state": state}
 
-@app.get("/ui2/accounts/bot")
-async def ui2_get_bot(ig_user_id: str = Query(...)):
+# -----------------------------------------------------------
+# Token utilities (come prima)
+# -----------------------------------------------------------
+class SaveTokenPayload(BaseModel):
+    token: str = Field(..., min_length=5)
+    ig_user_id: str = Field(..., min_length=3)
+    username: str = Field(..., min_length=1)
+    client_name: str = "Default Client"
+    client_email: Optional[str] = None
+    expires_at: Optional[datetime] = None
+
+class RefreshTokenPayload(BaseModel):
+    ig_user_id: str = Field(..., min_length=3)
+    token: str = Field(..., min_length=5)
+    expires_in_days: int = Field(default=60, ge=1, le=365)
+
+API_KEY = os.getenv("API_KEY", "")
+api_key_header = APIKeyHeader(name="x-api-key", auto_error=False)
+
+async def require_api_key(key: Optional[str] = Depends(api_key_header)) -> None:
+    if not API_KEY or key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+@app.post("/save-token", dependencies=[Depends(require_api_key)])
+async def save_token(data: SaveTokenPayload):
+    try:
+        exp = data.expires_at or (datetime.now(timezone.utc) + timedelta(days=60))
+        async with engine.begin() as conn:
+            client_id = (await conn.execute(
+                text("""
+                  INSERT INTO mfai_app.clients (name, email)
+                  VALUES (:name, COALESCE(:email, REPLACE(LOWER(:name),' ','_') || '@example.local'))
+                  ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name
+                  RETURNING id
+                """), {"name": data.client_name, "email": data.client_email}
+            )).scalar_one()
+
+            ig_account_id = (await conn.execute(
+                text("""
+                  INSERT INTO mfai_app.instagram_accounts (client_id, ig_user_id, username, active)
+                  VALUES (:client_id, :ig_user_id, :username, TRUE)
+                  ON CONFLICT (ig_user_id) DO UPDATE SET username = EXCLUDED.username, active = TRUE
+                  RETURNING id
+                """), {"client_id": client_id, "ig_user_id": data.ig_user_id, "username": data.username}
+            )).scalar_one()
+
+            await conn.execute(text("UPDATE mfai_app.tokens SET active = FALSE WHERE ig_account_id = :ig AND active = TRUE"),
+                               {"ig": ig_account_id})
+
+            await conn.execute(text("""
+              INSERT INTO mfai_app.tokens (ig_account_id, access_token, expires_at, long_lived, active)
+              VALUES (:ig_account_id, :token, :exp, TRUE, TRUE)
+            """), {"ig_account_id": ig_account_id, "token": data.token, "exp": exp})
+
+            await conn.execute(text("""
+              INSERT INTO mfai_app.message_logs (ig_account_id, direction, payload)
+              VALUES (:id, 'in', :p)
+            """), {"id": ig_account_id, "p": f"Saved token (len={len(data.token)})"})
+
+        return {"status":"ok","client_id":client_id,"ig_account_id":ig_account_id,"expires_at":exp.isoformat()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{e.__class__.__name__}: {e}")
+
+@app.get("/tokens/active")
+async def get_active_token(ig_user_id: str):
+    q = text("""
+        SELECT t.access_token, t.expires_at
+        FROM mfai_app.tokens t
+        JOIN mfai_app.instagram_accounts ia ON ia.id = t.ig_account_id
+        WHERE ia.ig_user_id = :ig AND t.active = TRUE
+        ORDER BY t.created_at DESC
+        LIMIT 1
+    """)
     async with engine.connect() as conn:
-        row = (await conn.execute(text("""
-          SELECT bot_enabled
-          FROM mfai_app.instagram_accounts
-          WHERE ig_user_id = :ig
-          LIMIT 1
-        """), {"ig": ig_user_id})).first()
+        row = (await conn.execute(q, {"ig": ig_user_id})).first()
     if not row:
-        raise HTTPException(status_code=404, detail="Instagram account non trovato")
-    return {"ig_user_id": ig_user_id, "enabled": bool(row[0])}
+        raise HTTPException(status_code=404, detail="Nessun token attivo trovato")
+    return {"ig_user_id": ig_user_id, "access_token": row[0], "expires_at": row[1]}
 
-@app.post("/ui2/accounts/bot")
-async def ui2_set_bot(payload: BotTogglePayload):
+@app.post("/tokens/refresh", dependencies=[Depends(require_api_key)])
+async def refresh_token(data: RefreshTokenPayload):
+    exp = datetime.now(timezone.utc) + timedelta(days=data.expires_in_days)
     async with engine.begin() as conn:
-        res = await conn.execute(text("""
-          UPDATE mfai_app.instagram_accounts
-          SET bot_enabled = :e
-          WHERE ig_user_id = :ig
-          RETURNING id
-        """), {"e": payload.enabled, "ig": payload.ig_user_id})
-        row = res.first()
+        row = (await conn.execute(
+            text("SELECT id FROM mfai_app.instagram_accounts WHERE ig_user_id = :ig AND active = TRUE LIMIT 1"),
+            {"ig": data.ig_user_id},
+        )).first()
         if not row:
             raise HTTPException(status_code=404, detail="Instagram account non trovato")
-    return {"status": "ok", "ig_user_id": payload.ig_user_id, "enabled": payload.enabled}
+        ig_account_id = row[0]
+        await conn.execute(text("UPDATE mfai_app.tokens SET active = FALSE WHERE ig_account_id = :id AND active = TRUE"),
+                           {"id": ig_account_id})
+        await conn.execute(text("""
+          INSERT INTO mfai_app.tokens (ig_account_id, access_token, expires_at, long_lived, active)
+          VALUES (:ig, :token, :exp, TRUE, TRUE)
+        """), {"ig": ig_account_id, "token": data.token, "exp": exp})
+    return {"status": "ok", "ig_user_id": data.ig_user_id, "expires_at": exp.isoformat()}
+
+@app.get("/tokens/expiring")
+async def tokens_expiring(days: int = 10):
+    threshold = datetime.now(timezone.utc) + timedelta(days=days)
+    q = text("""
+        SELECT ia.username, ia.ig_user_id, t.id AS token_id, t.expires_at
+        FROM mfai_app.tokens t
+        JOIN mfai_app.instagram_accounts ia ON ia.id = t.ig_account_id
+        WHERE t.active = TRUE AND t.expires_at IS NOT NULL AND t.expires_at <= :threshold
+        ORDER BY t.expires_at ASC
+        LIMIT 200
+    """)
+    async with engine.connect() as conn:
+        rows = (await conn.execute(q, {"threshold": threshold})).mappings().all()
+    return {"items": rows}
 
 # -----------------------------------------------------------
-# Admin classico (ponte)
+# Admin UI ponte
 # -----------------------------------------------------------
 @app.get("/admin/ui", response_class=HTMLResponse)
 def admin_ui_bridge():
@@ -863,54 +780,7 @@ def admin_ui_bridge():
 </body></html>"""
 
 # -----------------------------------------------------------
-# Static & routers opzionali
-# -----------------------------------------------------------
-if os.path.isdir("app/admin_ui/static"):
-    app.mount("/static", StaticFiles(directory="app/admin_ui/static"), name="static")
-
-try:
-    from app.routers.meta_webhook import router as meta_webhook_router
-    app.include_router(meta_webhook_router)
-except Exception as e:
-    print("Meta webhook router non caricato:", e)
-
-try:
-    from app.routers import admin_api
-    app.include_router(admin_api.router)
-except Exception as e:
-    print("Admin API router non caricato:", e)
-
-try:
-    from app.routers import admin_prompts
-    app.include_router(admin_prompts.router)
-except Exception as e:
-    print("Admin Prompts router non caricato:", e)
-
-try:
-    from app.admin_ui.routes import router as admin_ui_router
-    app.include_router(admin_ui_router)
-except Exception as e:
-    print("Admin UI router non caricato:", e)
-
-try:
-    from app.routers import admin_client_prompts
-    app.include_router(admin_client_prompts.router)
-except Exception as e:
-    print("Admin Client Prompts router non caricato:", e)
-
-try:
-    from app.public_ui.routes import router as public_ui_router  # type: ignore
-    app.include_router(public_ui_router)
-except Exception as e:
-    print("Public UI router non caricato:", e)
-
-# -----------------------------------------------------------
-# Templates (Jinja2 opzionali)
-# -----------------------------------------------------------
-templates = Jinja2Templates(directory="app/templates") if os.path.isdir("app/templates") else None
-
-# -----------------------------------------------------------
-# CORS
+# CORS + Security headers
 # -----------------------------------------------------------
 ALLOWED_ORIGINS = [
     "https://mid-ranna-soluzionidigitaliroma-f8d1ef2a.koyeb.app",
@@ -924,9 +794,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# -----------------------------------------------------------
-# Security headers (CSP)
-# -----------------------------------------------------------
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     resp = await call_next(request)
