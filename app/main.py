@@ -70,18 +70,40 @@ button{padding:10px 12px;border-radius:10px;border:1px solid var(--border);backg
 def ui2_js():
     return r"""
 (function(){
-  const api={clients:'/admin/clients',accounts:'/admin/accounts',tokens:'/admin/tokens',logs:'/admin/logs',prompts:(cid)=>`/admin/prompts/${cid}`};
-  const state={clients:[],accounts:[],tokens:[],selected:null};
-  const $=(s,el=document)=>el.querySelector(s);
-  const esc=s=>s?.replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;"," >":"&gt;",'"':"&quot;"}[m]))||"";
-  async function j(u,o={}){const r=await fetch(u,{...o,credentials:'include'});if(!r.ok)throw new Error(u+' -> '+r.status);return r.json();}
+  // --- Helpers ---
+  const api = {
+    clients:'/admin/clients',
+    accounts:'/admin/accounts',
+    tokens:'/admin/tokens',
+    logs:'/admin/logs',
+    prompts:(cid)=>`/admin/prompts/${cid}`
+  };
+  const state = { clients:[], accounts:[], tokens:[], selected:null };
+  const $ = (s,el=document)=> el.querySelector(s);
+  const esc = (s)=> (s??"").replace(/[&<>"]/g, m=>({ "&":"&amp;","<":"&lt;",">":"&gt;" }[m]));
+  async function j(url,opts={}){
+    const r = await fetch(url,{...opts,credentials:'include'});
+    if(!r.ok){
+      const text = await r.text().catch(()=> "");
+      throw new Error(`HTTP ${r.status} ${r.statusText} on ${url}\n${text}`);
+    }
+    return r.json();
+  }
+  function showFatal(msg){
+    const app = document.getElementById('app');
+    app.innerHTML = `<div style="padding:20px;font-family:system-ui">
+      <h2>⚠️ Errore UI</h2>
+      <pre style="white-space:pre-wrap;background:#111;color:#eee;padding:12px;border-radius:8px;border:1px solid #333;max-height:50vh;overflow:auto">${esc(String(msg))}</pre>
+    </div>`;
+  }
 
-  const root=document.getElementById('app');
-  root.innerHTML=`
+  // --- Shell immediata (così NON è bianca anche senza JS) ---
+  const root = document.getElementById('app');
+  root.innerHTML = `
     <aside class="side">
       <div class="brand">MF.AI — Clienti</div>
       <div class="search"><input id="q" placeholder="Cerca cliente…"></div>
-      <div id="list" class="list"></div>
+      <div id="list" class="list"><div class="card empty">Carico clienti…</div></div>
     </aside>
     <main class="main">
       <div class="bar">
@@ -95,43 +117,68 @@ def ui2_js():
   `;
 
   async function boot(){
-    $('#hint').textContent='Carico…';
-    const [c,a,t]=await Promise.all([j(api.clients),j(api.accounts),j(api.tokens)]);
-    state.clients=c; state.accounts=a; state.tokens=t;
-    renderList(); $('#hint').textContent='Pronto';
-    document.getElementById('q').addEventListener('input',e=>renderList(e.target.value));
+    try{
+      $('#hint').textContent='Carico…';
+      const [c,a,t] = await Promise.all([
+        j(api.clients),
+        j(api.accounts),
+        j(api.tokens),
+      ]);
+      state.clients=c; state.accounts=a; state.tokens=t;
+      renderList(); $('#hint').textContent=`Clienti: ${c.length}`;
+      $('#q').addEventListener('input',e=>renderList(e.target.value));
+    }catch(err){
+      showFatal(err);
+      console.error(err);
+    }
   }
 
   function renderList(f=''){
-    const box=document.getElementById('list'); box.innerHTML='';
-    const q=(f||'').trim().toLowerCase();
-    const items=state.clients.filter(c=>{const s=`${c.id||''} ${c.name||''} ${c.company||''}`.toLowerCase(); return !q||s.includes(q);});
+    const box = document.getElementById('list'); box.innerHTML='';
+    const q = (f||'').trim().toLowerCase();
+    const items = state.clients.filter(c=>{
+      const s = `${c.id||''} ${c.name||''} ${c.company||''}`.toLowerCase();
+      return !q || s.includes(q);
+    });
     for(const c of items){
-      const acc=state.accounts.find(a=>a.client_id===c.id);
-      const el=document.createElement('div'); el.className='item'+(state.selected===c.id?' active':'');
-      el.innerHTML=`<h4>${esc(c.name||c.company||('Cliente #'+c.id))}</h4><div class="meta">${acc?('@'+esc(acc.username)):'—'} · Bot ${acc?.bot_enabled?'ON':'OFF'}</div>`;
-      el.onclick=()=>select(c.id); box.appendChild(el);
+      const acc = state.accounts.find(a=>a.client_id===c.id);
+      const el = document.createElement('div');
+      el.className = 'item'+(state.selected===c.id?' active':'');
+      el.innerHTML = `<h4>${esc(c.name||c.company||('Cliente #'+c.id))}</h4>
+        <div class="meta">${acc?('@'+esc(acc.username)):'—'} · Bot ${acc?.bot_enabled?'ON':'OFF'}</div>`;
+      el.onclick = ()=> select(c.id);
+      box.appendChild(el);
     }
-    if(items.length===0) box.innerHTML='<div class="card empty">Nessun risultato</div>';
+    if(items.length===0){
+      box.innerHTML = '<div class="card empty">Nessun risultato</div>';
+    }
   }
 
   async function select(clientId){
-    state.selected=clientId; renderList(document.getElementById('q').value||'');
-    const c=state.clients.find(x=>x.id===clientId);
-    const acc=state.accounts.find(a=>a.client_id===clientId);
-    document.getElementById('crumb').textContent=c?.name||c?.company||('Cliente #'+clientId);
-    document.getElementById('hint').textContent='Carico scheda…';
-    let prompts=null, logs=[];
-    try{prompts=await j(api.prompts(clientId));}catch{}
-    try{logs=await j(api.logs+`?client_id=${clientId}&limit=30`);}catch{}
-    const toks=state.tokens.filter(t=>t.ig_account_id===acc?.id);
-    renderDetail({c,acc,toks,logs,prompts});
-    document.getElementById('hint').textContent='Pronto';
+    try{
+      state.selected = clientId;
+      renderList($('#q').value||'');
+      const c = state.clients.find(x=>x.id===clientId);
+      const acc = state.accounts.find(a=>a.client_id===clientId);
+      $('#crumb').textContent = c?.name || c?.company || ('Cliente #'+clientId);
+      $('#hint').textContent = 'Carico scheda…';
+
+      let prompts=null, logs=[];
+      try{ prompts = await j(api.prompts(clientId)); }catch(_e){ /* opzionale */ }
+      try{ logs = await j(api.logs+`?client_id=${clientId}&limit=30`); }catch(_e){ /* opzionale */ }
+
+      const toks = state.tokens.filter(t=> t.ig_account_id===acc?.id);
+      renderDetail({c,acc,toks,logs,prompts});
+      $('#hint').textContent = 'Pronto';
+    }catch(err){
+      showFatal(err);
+      console.error(err);
+    }
   }
 
   function renderDetail({c,acc,toks,logs,prompts}){
-    const d=document.getElementById('detail');
-    d.innerHTML=`
+    const d = document.getElementById('detail');
+    d.innerHTML = `
       <div class="card">
         <h3>Account</h3>
         <div class="row">
@@ -141,11 +188,15 @@ def ui2_js():
           <div class="kv"><b>Stato</b> <span class="${acc?.active?'status ok':'status bad'}">${acc?.active?'Attivo':'Disattivo'}</span></div>
         </div>
         <div class="row">
-          <label class="switch"><input id="bot" type="checkbox" ${acc?.bot_enabled?'checked':''} ${acc?'':'disabled'}><span class="track"><span class="thumb"></span></span></label>
+          <label class="switch">
+            <input id="bot" type="checkbox" ${acc?.bot_enabled?'checked':''} ${acc?'':'disabled'}>
+            <span class="track"><span class="thumb"></span></span>
+          </label>
           <span>Bot abilitato</span><span id="bots" style="color:#8ea0b5"></span>
         </div>
         <div class="row"><button id="refresh">Aggiorna</button></div>
       </div>
+
       <div class="card">
         <h3>Prompt cliente</h3>
         <div class="row"><input id="greet" type="text" placeholder="Greeting" value="${esc(prompts?.greeting||'')}"></div>
@@ -155,42 +206,63 @@ def ui2_js():
         <div class="row"><button id="savep" ${prompts===null?'disabled':''}>Salva prompt</button><span id="ps" style="color:#8ea0b5"></span></div>
         ${prompts===null?'<div class="meta">/admin/prompts/{client_id} non disponibile: salvataggio disabilitato.</div>':''}
       </div>
+
       <div class="card">
         <h3>Token</h3>
         ${toks.length?`<div class="log">${toks.map(t=>`• ${t.long_lived?'LLT':'SLT'} | scade: ${new Date(t.expires_at).toLocaleString()} | active=${t.active}`).join('\n')}</div>`:'<div class="meta">Nessun token per questo account.</div>'}
       </div>
+
       <div class="card">
         <h3>Ultimi log</h3>
         ${logs?.length?`<div class="log">${logs.map(x=>`[${new Date(x.ts||x.created_at).toLocaleString()}] ${x.direction||''} ${x.payload?JSON.stringify(x.payload):''}`).join('\n')}</div>`:'<div class="meta">Nessun log recente.</div>'}
       </div>
     `;
-    document.getElementById('refresh').onclick=()=>select(c.id);
-    const bot=document.getElementById('bot'), bots=document.getElementById('bots');
-    if(bot&&acc){
-      bot.onchange=async()=>{
+
+    $('#refresh').onclick = ()=> select(c.id);
+
+    const bot = $('#bot'), bots = $('#bots');
+    if(bot && acc){
+      bot.onchange = async ()=>{
         try{
           bots.textContent='…';
-          await fetch('/admin/accounts',{method:'PATCH',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({ig_user_id:acc.ig_user_id,bot_enabled:bot.checked})});
+          await fetch('/admin/accounts',{
+            method:'PATCH',
+            credentials:'include',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({ ig_user_id: acc.ig_user_id, bot_enabled: bot.checked })
+          });
           bots.textContent='Salvato';
         }catch(e){ bots.textContent='Errore'; }
       };
     }
-    const savep=document.getElementById('savep'), ps=document.getElementById('ps');
+
+    const savep = $('#savep'), ps = $('#ps');
     if(savep){
-      savep.onclick=async()=>{
+      savep.onclick = async ()=>{
         try{
           ps.textContent='…';
-          await fetch(api.prompts(c.id),{method:'PUT',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({greeting:document.getElementById('greet').value,fallback:document.getElementById('fallback').value,handoff:document.getElementById('handoff').value,legal:document.getElementById('legal').value})});
+          await fetch(api.prompts(c.id),{
+            method:'PUT',
+            credentials:'include',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({
+              greeting: $('#greet').value,
+              fallback: $('#fallback').value,
+              handoff:  $('#handoff').value,
+              legal:    $('#legal').value
+            })
+          });
           ps.textContent='Salvato';
         }catch(e){ ps.textContent='Errore'; }
       };
     }
   }
 
-  window.select=select;
-  boot();
+  // Avvio
+  try { boot(); } catch (e) { showFatal(e); console.error(e); }
 })();
 """
+
 
 
 
