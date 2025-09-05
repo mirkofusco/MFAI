@@ -1,12 +1,12 @@
 # ============================================================
-# MF.AI — FastAPI (main.py) — UI /ui2 + Prompts endpoints
+# MF.AI — FastAPI (main.py) — UI /ui2 + Prompts + Bot buttons
 # ============================================================
 
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, Body, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -64,10 +64,8 @@ def ui2_css():
 input[type="text"],textarea{width:100%;padding:10px;border-radius:10px;border:1px solid var(--border);background:#0d1322;color:var(--text);font:13px}
 button{padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--btn);color:var(--text);cursor:pointer}
 button.primary{outline:1px solid var(--accent)}
+button.danger{border-color:rgba(239,68,68,.4)}button.danger:hover{filter:brightness(1.1)}
 button:hover{filter:brightness(1.1)}
-.switch input{display:none}.switch .track{width:46px;height:26px;border-radius:999px;background:#32405e;position:relative}
-.switch .thumb{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:.18s}
-.switch input:checked + .track{background:var(--ok)}.switch input:checked + .track .thumb{left:23px}
 .chip{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid var(--border);border-radius:999px;font-size:12px}
 .chip.ok{background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.3);color:var(--ok)}
 .chip.bad{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.3);color:var(--bad)}
@@ -86,13 +84,15 @@ def ui2_js():
     return Response(
         r"""
 (function(){
-  // API endpoints — NOTA: prompts usa rotta dedicata /ui2/prompts
+  // API endpoints — prompts e bot usano route /ui2/*
   const api={
     clients:'/admin/clients',
-    accounts:'/admin/accounts',       // lasciamo questo (toggle Bot) se il tuo backend già lo espone
+    accounts:'/admin/accounts', // se assente, lo gestiamo via /ui2/accounts/bot
     tokens:'/admin/tokens',
     logs:'/admin/logs',
-    prompts:(cid)=>`/ui2/prompts/${cid}`,  // <-- nuove route implementate in questo file
+    prompts:(cid)=>`/ui2/prompts/${cid}`,
+    botGet:(id)=>`/ui2/accounts/bot?ig_user_id=${encodeURIComponent(id)}`,
+    botSet:'/ui2/accounts/bot',
     adminUI:'/admin/ui'
   };
 
@@ -129,7 +129,7 @@ def ui2_js():
   async function boot(){
     try{
       $('#hint').textContent='Carico…';
-      const [c,a,t]=await Promise.all([j(api.clients),j(api.accounts),j(api.tokens)]);
+      const [c,a,t]=await Promise.all([j(api.clients),j(api.accounts).catch(()=>([])),j(api.tokens).catch(()=>([]))]);
       state.clients=c; state.accounts=a; state.tokens=t;
       renderList(); $('#hint').textContent=`Clienti: ${c.length}`;
       $('#q').addEventListener('input',e=>renderList(e.target.value));
@@ -149,13 +149,27 @@ def ui2_js():
     if(items.length===0) box.innerHTML='<div class="card empty">Nessun risultato</div>';
   }
 
+  async function ensureBotFlag(acc){
+    if(!acc?.ig_user_id) return acc;
+    // se manca bot_enabled, leggilo dal nostro endpoint
+    if(typeof acc.bot_enabled === 'undefined'){
+      try{
+        const s = await j(api.botGet(acc.ig_user_id));
+        acc.bot_enabled = !!s.enabled;
+      }catch(_e){ acc.bot_enabled = false; }
+    }
+    return acc;
+  }
+
   async function select(clientId){
     try{
       state.selected=clientId; renderList($('#q').value||'');
       const c=state.clients.find(x=>x.id===clientId);
-      const acc=state.accounts.find(a=>a.client_id===clientId);
+      let acc=state.accounts.find(a=>a.client_id===clientId);
       $('#crumb').textContent=c?.name||c?.company||('Cliente #'+clientId);
       $('#hint').textContent='Carico scheda…';
+
+      if(acc) acc = await ensureBotFlag(acc);
 
       let prompts=null, promptsErr=null, logs=[];
       try{ prompts=await j(api.prompts(clientId)); }catch(e){ promptsErr=String(e); }
@@ -182,6 +196,15 @@ def ui2_js():
     const d=document.getElementById('detail');
     const statusChip = acc?.active ? `<span class="chip ok">Attivo</span>` : `<span class="chip bad">Disattivo</span>`;
     const botChip = acc?.bot_enabled ? `<span id="botchip" class="chip ok">ON</span>` : `<span id="botchip" class="chip bad">OFF</span>`;
+
+    // BOT buttons (niente switch)
+    const botButtons = `
+      <div class="group" id="botButtons">
+        <button id="btnBotOn"  class="primary">Attiva bot</button>
+        <button id="btnBotOff" class="danger">Disattiva bot</button>
+        ${botChip}
+        <span id="bots" class="hint"></span>
+      </div>`;
 
     let promptsCard='';
     if(prompts){
@@ -223,15 +246,7 @@ def ui2_js():
           <div class="kv"><b>Stato</b> ${statusChip}</div>
         </div>
         <div class="row">
-          <div class="group">
-            <b>Bot</b>
-            <label class="switch">
-              <input id="bot" type="checkbox" ${acc?.bot_enabled?'checked':''} ${acc?'':'disabled'}>
-              <span class="track"><span class="thumb"></span></span>
-            </label>
-            ${botChip}
-            <span id="bots" class="hint"></span>
-          </div>
+          ${acc ? botButtons : '<span class="hint">Nessun account IG collegato.</span>'}
         </div>
       </div>
 
@@ -248,25 +263,28 @@ def ui2_js():
       </div>
     `;
 
-    // azioni
     const refresh=$('#refresh'); if(refresh){ refresh.onclick=()=>select(c.id); }
 
-    const bot=$('#bot'), bots=$('#bots'), botchip=$('#botchip');
-    if(bot&&acc){
-      bot.onchange=async()=>{
-        try{
-          bots.textContent='…';
-          await fetch(api.accounts,{method:'PATCH',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({ig_user_id:acc.ig_user_id,bot_enabled:bot.checked})});
-          botchip.textContent = bot.checked ? 'ON' : 'OFF';
-          botchip.className = 'chip ' + (bot.checked ? 'ok' : 'bad');
-          bots.textContent='Salvato';
-        }catch(e){
-          bots.textContent='Errore';
-          bot.checked=!bot.checked; // rollback se fallisce
-        }
-      };
+    // BOT handlers
+    const btnOn=$('#btnBotOn'), btnOff=$('#btnBotOff'), bots=$('#bots'), botchip=$('#botchip');
+    async function setBot(enabled){
+      try{
+        bots.textContent='…';
+        await j(api.botSet,{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({ig_user_id:acc.ig_user_id, enabled})});
+        botchip.textContent = enabled ? 'ON' : 'OFF';
+        botchip.className = 'chip ' + (enabled ? 'ok' : 'bad');
+        bots.textContent='Salvato';
+      }catch(e){
+        bots.textContent='Errore';
+        console.error(e);
+      }
+    }
+    if(btnOn && btnOff && acc){
+      btnOn.onclick = ()=> setBot(true);
+      btnOff.onclick = ()=> setBot(false);
     }
 
+    // Prompts handlers
     const savep=$('#savep'), ps=$('#ps');
     if(savep){
       savep.onclick=async()=>{
@@ -303,18 +321,17 @@ def ui2_js():
     )
 
 # -----------------------------------------------------------
-# Endpoint Admin classico (ponte, evita 404)
+# Admin classico (ponte per evitare 404)
 # -----------------------------------------------------------
 @app.get("/admin/ui", response_class=HTMLResponse)
 def admin_ui_bridge():
-    # pagina ponte: prova a rimandare al vecchio UI (se esiste /ui/clients)
     return """<!doctype html><html lang="it"><head><meta charset="utf-8">
 <title>Admin classico</title></head><body style="font-family:system-ui;padding:20px">
 <h2>Admin classico</h2>
 <p>Se il vecchio pannello è disponibile, lo trovi qui:
   <a href="/ui/clients">/ui/clients</a>
 </p>
-<p>In alternativa puoi usare la nuova interfaccia: <a href="/ui2">/ui2</a></p>
+<p>Oppure usa la nuova interfaccia: <a href="/ui2">/ui2</a></p>
 </body></html>"""
 
 # -----------------------------------------------------------
@@ -326,42 +343,36 @@ if os.path.isdir("app/admin_ui/static"):
 # -----------------------------------------------------------
 # Router esterni (import safe)
 # -----------------------------------------------------------
-# Webhook Meta
 try:
     from app.routers.meta_webhook import router as meta_webhook_router
     app.include_router(meta_webhook_router)
 except Exception as e:
     print("Meta webhook router non caricato:", e)
 
-# Admin API JSON (clients/accounts/tokens/logs)
 try:
     from app.routers import admin_api
     app.include_router(admin_api.router)
 except Exception as e:
     print("Admin API router non caricato:", e)
 
-# Admin Prompts JSON (se c'è; ma noi usiamo /ui2/prompts/*)
 try:
     from app.routers import admin_prompts
     app.include_router(admin_prompts.router)
 except Exception as e:
     print("Admin Prompts router non caricato:", e)
 
-# Admin UI classica (se esiste)
 try:
     from app.admin_ui.routes import router as admin_ui_router
     app.include_router(admin_ui_router)
 except Exception as e:
     print("Admin UI router non caricato:", e)
 
-# Admin client prompts (overview) — opzionale
 try:
     from app.routers import admin_client_prompts
     app.include_router(admin_client_prompts.router)
 except Exception as e:
     print("Admin Client Prompts router non caricato:", e)
 
-# Public UI (/c/*) — opzionale
 try:
     from app.public_ui.routes import router as public_ui_router  # type: ignore
     app.include_router(public_ui_router)
@@ -389,7 +400,7 @@ app.add_middleware(
 )
 
 # -----------------------------------------------------------
-# Security headers (CSP: solo self; no inline)
+# Security headers (CSP)
 # -----------------------------------------------------------
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
@@ -420,7 +431,7 @@ async def require_api_key(key: Optional[str] = Depends(api_key_header)) -> None:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 # -----------------------------------------------------------
-# verify_admin (fallback se modulo assente)
+# verify_admin (fallback)
 # -----------------------------------------------------------
 try:
     from app.security_admin import verify_admin
@@ -445,6 +456,8 @@ CREATE TABLE IF NOT EXISTS mfai_app.instagram_accounts (
   ig_user_id TEXT UNIQUE NOT NULL,
   username TEXT NOT NULL,
   active BOOLEAN NOT NULL DEFAULT TRUE,
+  -- AGGIUNTA: flag bot
+  bot_enabled BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -518,8 +531,15 @@ async def ensure_schema():
         await conn.exec_driver_sql("SET search_path TO mfai_app;")
         who = (await conn.execute(text("SELECT current_user, current_schema();"))).first()
         print("DB identity:", who)
+        # crea tabelle/base
         for stmt in _split_sql(SCHEMA_SQL):
             await conn.exec_driver_sql(stmt)
+        # in caso la tabella esistesse già senza colonna bot_enabled, aggiungila qui:
+        await conn.exec_driver_sql("""
+          ALTER TABLE mfai_app.instagram_accounts
+          ADD COLUMN IF NOT EXISTS bot_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+        """)
+        # seed demo opzionale
         if os.getenv("PUBLIC_SEED_DEMO", "1") == "1":
             await conn.exec_driver_sql("""
             DO $$
@@ -609,7 +629,6 @@ async def save_token(data: SaveTokenPayload):
     try:
         exp = data.expires_at or (datetime.now(timezone.utc) + timedelta(days=60))
         async with engine.begin() as conn:
-            # 1) Upsert client
             res = await conn.execute(
                 text("""
                     INSERT INTO mfai_app.clients (name, email)
@@ -621,7 +640,6 @@ async def save_token(data: SaveTokenPayload):
             )
             client_id = res.scalar_one()
 
-            # 2) Upsert IG account
             res = await conn.execute(
                 text("""
                     INSERT INTO mfai_app.instagram_accounts (client_id, ig_user_id, username, active)
@@ -634,13 +652,11 @@ async def save_token(data: SaveTokenPayload):
             )
             ig_account_id = res.scalar_one()
 
-            # 3) Disattiva token attivo precedente
             await conn.execute(
                 text("UPDATE mfai_app.tokens SET active = FALSE WHERE ig_account_id = :ig AND active = TRUE"),
                 {"ig": ig_account_id},
             )
 
-            # 4) Inserisci nuovo token attivo
             await conn.execute(
                 text("""
                     INSERT INTO mfai_app.tokens (ig_account_id, access_token, expires_at, long_lived, active)
@@ -649,7 +665,6 @@ async def save_token(data: SaveTokenPayload):
                 {"ig_account_id": ig_account_id, "token": data.token, "expires_at": exp},
             )
 
-            # 5) Log tecnico
             await conn.execute(
                 text("INSERT INTO mfai_app.message_logs (ig_account_id, direction, payload) VALUES (:id,'in',:p)"),
                 {"id": ig_account_id, "p": f"Saved token (len={len(data.token)})"},
@@ -741,7 +756,7 @@ async def admin_client_overview(client_id: int):
             raise HTTPException(status_code=404, detail="Cliente non trovato")
 
         ig_accounts = (await conn.execute(text("""
-          SELECT id, ig_user_id, username, active, created_at
+          SELECT id, ig_user_id, username, active, bot_enabled, created_at
           FROM mfai_app.instagram_accounts
           WHERE client_id = :cid
           ORDER BY id DESC
@@ -764,7 +779,7 @@ async def admin_client_overview(client_id: int):
     return {"client": client, "ig_accounts": ig_accounts, "public_spaces": spaces, "active_tokens": tokens}
 
 # -----------------------------------------------------------
-# Prompts endpoints dedicati per /ui2  (niente 405)
+# Prompts endpoints dedicati per /ui2
 # -----------------------------------------------------------
 class ClientPrompts(BaseModel):
     greeting: str = ""
@@ -774,7 +789,6 @@ class ClientPrompts(BaseModel):
 
 @app.get("/ui2/prompts/{client_id}")
 async def ui2_get_prompts(client_id: int):
-    """Ritorna i 4 prompts come JSON semplice."""
     async with engine.connect() as conn:
         rows = (await conn.execute(text("""
           SELECT key, value
@@ -791,7 +805,6 @@ async def ui2_get_prompts(client_id: int):
 
 @app.put("/ui2/prompts/{client_id}")
 async def ui2_put_prompts(client_id: int, body: ClientPrompts):
-    """Upsert dei 4 prompts nel DB."""
     async with engine.begin() as conn:
         for k, v in body.model_dump().items():
             await conn.execute(text("""
@@ -802,5 +815,132 @@ async def ui2_put_prompts(client_id: int, body: ClientPrompts):
     return {"status": "ok"}
 
 # -----------------------------------------------------------
-# Static & router opzionali (fine)
+# BOT endpoints dedicati per /ui2 (salvataggio certo)
 # -----------------------------------------------------------
+class BotTogglePayload(BaseModel):
+    ig_user_id: str
+    enabled: bool
+
+@app.get("/ui2/accounts/bot")
+async def ui2_get_bot(ig_user_id: str = Query(...)):
+    async with engine.connect() as conn:
+        row = (await conn.execute(text("""
+          SELECT bot_enabled
+          FROM mfai_app.instagram_accounts
+          WHERE ig_user_id = :ig
+          LIMIT 1
+        """), {"ig": ig_user_id})).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Instagram account non trovato")
+    return {"ig_user_id": ig_user_id, "enabled": bool(row[0])}
+
+@app.post("/ui2/accounts/bot")
+async def ui2_set_bot(payload: BotTogglePayload):
+    async with engine.begin() as conn:
+        res = await conn.execute(text("""
+          UPDATE mfai_app.instagram_accounts
+          SET bot_enabled = :e
+          WHERE ig_user_id = :ig
+          RETURNING id
+        """), {"e": payload.enabled, "ig": payload.ig_user_id})
+        row = res.first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Instagram account non trovato")
+    return {"status": "ok", "ig_user_id": payload.ig_user_id, "enabled": payload.enabled}
+
+# -----------------------------------------------------------
+# Admin classico (ponte)
+# -----------------------------------------------------------
+@app.get("/admin/ui", response_class=HTMLResponse)
+def admin_ui_bridge():
+    return """<!doctype html><html lang="it"><head><meta charset="utf-8">
+<title>Admin classico</title></head><body style="font-family:system-ui;padding:20px">
+<h2>Admin classico</h2>
+<p>Se il vecchio pannello è disponibile, lo trovi qui:
+  <a href="/ui/clients">/ui/clients</a>
+</p>
+<p>Oppure usa la nuova interfaccia: <a href="/ui2">/ui2</a></p>
+</body></html>"""
+
+# -----------------------------------------------------------
+# Static & routers opzionali
+# -----------------------------------------------------------
+if os.path.isdir("app/admin_ui/static"):
+    app.mount("/static", StaticFiles(directory="app/admin_ui/static"), name="static")
+
+try:
+    from app.routers.meta_webhook import router as meta_webhook_router
+    app.include_router(meta_webhook_router)
+except Exception as e:
+    print("Meta webhook router non caricato:", e)
+
+try:
+    from app.routers import admin_api
+    app.include_router(admin_api.router)
+except Exception as e:
+    print("Admin API router non caricato:", e)
+
+try:
+    from app.routers import admin_prompts
+    app.include_router(admin_prompts.router)
+except Exception as e:
+    print("Admin Prompts router non caricato:", e)
+
+try:
+    from app.admin_ui.routes import router as admin_ui_router
+    app.include_router(admin_ui_router)
+except Exception as e:
+    print("Admin UI router non caricato:", e)
+
+try:
+    from app.routers import admin_client_prompts
+    app.include_router(admin_client_prompts.router)
+except Exception as e:
+    print("Admin Client Prompts router non caricato:", e)
+
+try:
+    from app.public_ui.routes import router as public_ui_router  # type: ignore
+    app.include_router(public_ui_router)
+except Exception as e:
+    print("Public UI router non caricato:", e)
+
+# -----------------------------------------------------------
+# Templates (Jinja2 opzionali)
+# -----------------------------------------------------------
+templates = Jinja2Templates(directory="app/templates") if os.path.isdir("app/templates") else None
+
+# -----------------------------------------------------------
+# CORS
+# -----------------------------------------------------------
+ALLOWED_ORIGINS = [
+    "https://mid-ranna-soluzionidigitaliroma-f8d1ef2a.koyeb.app",
+    "https://api.soluzionidigitali.roma.it",
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# -----------------------------------------------------------
+# Security headers (CSP)
+# -----------------------------------------------------------
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    resp = await call_next(request)
+    resp.headers.update(
+        {
+            "X-Frame-Options": "DENY",
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "no-referrer",
+            "Permissions-Policy": "camera=(), geolocation=(), microphone=()",
+            "Cache-Control": "no-store",
+            "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+            "Content-Security-Policy": (
+                "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:"
+            ),
+        }
+    )
+    return resp
