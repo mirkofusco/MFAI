@@ -65,7 +65,19 @@
         <li><strong>IG accounts:</strong> ${data.ig_accounts.length}</li>
         <li><strong>Spazi pubblici:</strong> ${data.public_spaces.length}</li>
       </ul>`;
-    const mapToken = new Map((data.active_tokens||[]).map(x=>[x.ig_account_id, x.expires_at]));
+    const map
+<section class="card">
+  <h3>Prompt AI del cliente</h3>
+  <p class="muted">Esempio: “Sei l’assistente di un nutrizionista. Obiettivo: fissare appuntamenti in studio. Risposte brevi e professionali.”</p>
+  <textarea id="ai_prompt" rows="8" placeholder="Istruzioni AI del cliente..."></textarea>
+  <div class="row">
+    <button id="btn-save-ai-prompt" class="btn">Salva</button>
+    <span id="ai-prompt-status" class="muted"></span>
+  </div>
+</section>
+
+
+Token = new Map((data.active_tokens||[]).map(x=>[x.ig_account_id, x.expires_at]));
     document.getElementById('iglist').innerHTML = `
       <table role="grid"><thead><tr><th>ID</th><th>User</th><th>IG User ID</th><th>Attivo</th><th>Token attivo scade</th></tr></thead>
       <tbody>
