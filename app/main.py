@@ -687,5 +687,10 @@ function renderDetail({c,acc,toks,logs,prompts}){ const d=$('#detail'); d.innerH
 $('#q').addEventListener('input',e=>renderList(e.target.value)); boot();
 </script></body></html>"""
 
+@app.get("/ping")
+def ping():
+    return {"pong": True}
+
+
 
 
