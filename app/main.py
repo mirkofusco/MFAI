@@ -19,11 +19,179 @@ from app.db import engine  # engine async verso Neon
 
 APP_NAME = "MF.AI"
 app = FastAPI(title=APP_NAME)
-from fastapi.responses import PlainTextResponse  # se già importato, ok
+from fastapi.responses import HTMLResponse, PlainTextResponse  # HTML + testo
 
-@app.get("/ui2", response_class=PlainTextResponse)
-def ui2_probe():
-    return "UI2 OK"
+@app.get("/ui2", response_class=HTMLResponse)
+def ui2_page():
+    return """<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>MF.AI — Clienti</title>
+  <link rel="stylesheet" href="/ui2.css">
+</head>
+<body>
+  <div id="app"></div>
+  <script src="/ui2.js" defer></script>
+</body>
+</html>"""
+
+@app.get("/ui2.css", response_class=PlainTextResponse)
+def ui2_css():
+    return """:root{--bg:#0b0f19;--panel:#12182a;--text:#e8eef6;--muted:#8ea0b5;--border:#1f2942;--accent:#4da3ff;--ok:#22c55e;--bad:#ef4444}
+*{box-sizing:border-box}html,body{height:100%}body{margin:0;background:var(--bg);color:var(--text);font:14px system-ui,Segoe UI,Roboto}
+.app{display:grid;grid-template-columns:300px 1fr;height:100vh}
+.side{border-right:1px solid var(--border);background:var(--panel);display:flex;flex-direction:column}
+.brand{padding:14px 12px;border-bottom:1px solid var(--border);font-weight:700}
+.search{padding:10px 12px}.search input{width:100%;padding:10px;border-radius:10px;border:1px solid var(--border);background:#0d1322;color:var(--text)}
+.list{overflow:auto;padding:8px}
+.item{padding:10px;border-radius:10px;cursor:pointer;margin:6px 4px}
+.item:hover{background:#0e162c}.item.active{outline:1px solid var(--accent);background:#0e1a33}
+.item h4{margin:0 0 4px 0;font-size:14px}.meta{color:var(--muted);font-size:12px}
+.main{display:flex;flex-direction:column}
+.bar{display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--border);padding:10px;background:#0d1426}
+.crumb{padding:6px 10px;border:1px solid var(--border);border-radius:999px}
+.content{padding:16px;overflow:auto}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:14px}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+.kv{display:flex;gap:6px;align-items:center;background:#0e1528;border:1px solid var(--border);padding:8px 10px;border-radius:10px}
+input[type="text"],textarea{width:100%;padding:10px;border-radius:10px;border:1px solid var(--border);background:#0d1322;color:var(--text);font:13px}
+button{padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:#0f1730;color:var(--text);cursor:pointer}
+.switch input{display:none}.switch .track{width:40px;height:22px;border-radius:999px;background:#32405e;position:relative}
+.switch .thumb{position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.2s}
+.switch input:checked + .track{background:var(--ok)}.switch input:checked + .track .thumb{left:20px}
+.status.ok{color:var(--ok)}.status.bad{color:var(--bad)}.empty{opacity:.7}
+.log{font-family:ui-monospace,Menlo,Consolas;font-size:12px;background:#0c1222;border:1px solid #1b2442;border-radius:10px;padding:10px;white-space:pre-wrap;max-height:220px;overflow:auto}
+#app{display:grid;grid-template-columns:300px 1fr;height:100vh}
+"""
+
+@app.get("/ui2.js", response_class=PlainTextResponse)
+def ui2_js():
+    return r"""
+(function(){
+  const api={clients:'/admin/clients',accounts:'/admin/accounts',tokens:'/admin/tokens',logs:'/admin/logs',prompts:(cid)=>`/admin/prompts/${cid}`};
+  const state={clients:[],accounts:[],tokens:[],selected:null};
+  const $=(s,el=document)=>el.querySelector(s);
+  const esc=s=>s?.replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;"," >":"&gt;",'"':"&quot;"}[m]))||"";
+  async function j(u,o={}){const r=await fetch(u,{...o,credentials:'include'});if(!r.ok)throw new Error(u+' -> '+r.status);return r.json();}
+
+  const root=document.getElementById('app');
+  root.innerHTML=`
+    <aside class="side">
+      <div class="brand">MF.AI — Clienti</div>
+      <div class="search"><input id="q" placeholder="Cerca cliente…"></div>
+      <div id="list" class="list"></div>
+    </aside>
+    <main class="main">
+      <div class="bar">
+        <div id="crumb" class="crumb">Nessun cliente</div>
+        <span id="hint" style="color:#8ea0b5"></span>
+      </div>
+      <div id="detail" class="content">
+        <div class="card empty">Seleziona un cliente dalla lista.</div>
+      </div>
+    </main>
+  `;
+
+  async function boot(){
+    $('#hint').textContent='Carico…';
+    const [c,a,t]=await Promise.all([j(api.clients),j(api.accounts),j(api.tokens)]);
+    state.clients=c; state.accounts=a; state.tokens=t;
+    renderList(); $('#hint').textContent='Pronto';
+    document.getElementById('q').addEventListener('input',e=>renderList(e.target.value));
+  }
+
+  function renderList(f=''){
+    const box=document.getElementById('list'); box.innerHTML='';
+    const q=(f||'').trim().toLowerCase();
+    const items=state.clients.filter(c=>{const s=`${c.id||''} ${c.name||''} ${c.company||''}`.toLowerCase(); return !q||s.includes(q);});
+    for(const c of items){
+      const acc=state.accounts.find(a=>a.client_id===c.id);
+      const el=document.createElement('div'); el.className='item'+(state.selected===c.id?' active':'');
+      el.innerHTML=`<h4>${esc(c.name||c.company||('Cliente #'+c.id))}</h4><div class="meta">${acc?('@'+esc(acc.username)):'—'} · Bot ${acc?.bot_enabled?'ON':'OFF'}</div>`;
+      el.onclick=()=>select(c.id); box.appendChild(el);
+    }
+    if(items.length===0) box.innerHTML='<div class="card empty">Nessun risultato</div>';
+  }
+
+  async function select(clientId){
+    state.selected=clientId; renderList(document.getElementById('q').value||'');
+    const c=state.clients.find(x=>x.id===clientId);
+    const acc=state.accounts.find(a=>a.client_id===clientId);
+    document.getElementById('crumb').textContent=c?.name||c?.company||('Cliente #'+clientId);
+    document.getElementById('hint').textContent='Carico scheda…';
+    let prompts=null, logs=[];
+    try{prompts=await j(api.prompts(clientId));}catch{}
+    try{logs=await j(api.logs+`?client_id=${clientId}&limit=30`);}catch{}
+    const toks=state.tokens.filter(t=>t.ig_account_id===acc?.id);
+    renderDetail({c,acc,toks,logs,prompts});
+    document.getElementById('hint').textContent='Pronto';
+  }
+
+  function renderDetail({c,acc,toks,logs,prompts}){
+    const d=document.getElementById('detail');
+    d.innerHTML=`
+      <div class="card">
+        <h3>Account</h3>
+        <div class="row">
+          <div class="kv"><b>Client ID</b> ${esc(String(c.id))}</div>
+          <div class="kv"><b>IG</b> ${acc?('@'+esc(acc.username)):'—'}</div>
+          <div class="kv"><b>IG_USER_ID</b> ${esc(acc?.ig_user_id||'—')}</div>
+          <div class="kv"><b>Stato</b> <span class="${acc?.active?'status ok':'status bad'}">${acc?.active?'Attivo':'Disattivo'}</span></div>
+        </div>
+        <div class="row">
+          <label class="switch"><input id="bot" type="checkbox" ${acc?.bot_enabled?'checked':''} ${acc?'':'disabled'}><span class="track"><span class="thumb"></span></span></label>
+          <span>Bot abilitato</span><span id="bots" style="color:#8ea0b5"></span>
+        </div>
+        <div class="row"><button id="refresh">Aggiorna</button></div>
+      </div>
+      <div class="card">
+        <h3>Prompt cliente</h3>
+        <div class="row"><input id="greet" type="text" placeholder="Greeting" value="${esc(prompts?.greeting||'')}"></div>
+        <div class="row"><input id="fallback" type="text" placeholder="Fallback" value="${esc(prompts?.fallback||'')}"></div>
+        <div class="row"><input id="handoff" type="text" placeholder="Handoff" value="${esc(prompts?.handoff||'')}"></div>
+        <div class="row"><input id="legal" type="text" placeholder="Legal disclaimer" value="${esc(prompts?.legal||'')}"></div>
+        <div class="row"><button id="savep" ${prompts===null?'disabled':''}>Salva prompt</button><span id="ps" style="color:#8ea0b5"></span></div>
+        ${prompts===null?'<div class="meta">/admin/prompts/{client_id} non disponibile: salvataggio disabilitato.</div>':''}
+      </div>
+      <div class="card">
+        <h3>Token</h3>
+        ${toks.length?`<div class="log">${toks.map(t=>`• ${t.long_lived?'LLT':'SLT'} | scade: ${new Date(t.expires_at).toLocaleString()} | active=${t.active}`).join('\n')}</div>`:'<div class="meta">Nessun token per questo account.</div>'}
+      </div>
+      <div class="card">
+        <h3>Ultimi log</h3>
+        ${logs?.length?`<div class="log">${logs.map(x=>`[${new Date(x.ts||x.created_at).toLocaleString()}] ${x.direction||''} ${x.payload?JSON.stringify(x.payload):''}`).join('\n')}</div>`:'<div class="meta">Nessun log recente.</div>'}
+      </div>
+    `;
+    document.getElementById('refresh').onclick=()=>select(c.id);
+    const bot=document.getElementById('bot'), bots=document.getElementById('bots');
+    if(bot&&acc){
+      bot.onchange=async()=>{
+        try{
+          bots.textContent='…';
+          await fetch('/admin/accounts',{method:'PATCH',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({ig_user_id:acc.ig_user_id,bot_enabled:bot.checked})});
+          bots.textContent='Salvato';
+        }catch(e){ bots.textContent='Errore'; }
+      };
+    }
+    const savep=document.getElementById('savep'), ps=document.getElementById('ps');
+    if(savep){
+      savep.onclick=async()=>{
+        try{
+          ps.textContent='…';
+          await fetch(api.prompts(c.id),{method:'PUT',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({greeting:document.getElementById('greet').value,fallback:document.getElementById('fallback').value,handoff:document.getElementById('handoff').value,legal:document.getElementById('legal').value})});
+          ps.textContent='Salvato';
+        }catch(e){ ps.textContent='Errore'; }
+      };
+    }
+  }
+
+  window.select=select;
+  boot();
+})();
+"""
+
 
 
 
