@@ -1,10 +1,10 @@
 # ============================================================
-# MF.AI — FastAPI (main.py) — UI /ui2 CSP-safe e Admin
+# MF.AI — FastAPI (main.py) — UI /ui2 + Prompts endpoints
 # ============================================================
 
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Optional, Dict
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,7 +21,7 @@ APP_NAME = "MF.AI"
 app = FastAPI(title=APP_NAME)
 
 # -----------------------------------------------------------
-# UI /ui2 (Nessun inline; file serviti localmente, CSP-friendly)
+# UI /ui2 (CSP-safe: niente inline; asset locali)
 # -----------------------------------------------------------
 @app.get("/ui2", response_class=HTMLResponse)
 def ui2_page():
@@ -63,6 +63,7 @@ def ui2_css():
 .kv b{opacity:.9}
 input[type="text"],textarea{width:100%;padding:10px;border-radius:10px;border:1px solid var(--border);background:#0d1322;color:var(--text);font:13px}
 button{padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--btn);color:var(--text);cursor:pointer}
+button.primary{outline:1px solid var(--accent)}
 button:hover{filter:brightness(1.1)}
 .switch input{display:none}.switch .track{width:46px;height:26px;border-radius:999px;background:#32405e;position:relative}
 .switch .thumb{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:.18s}
@@ -72,6 +73,8 @@ button:hover{filter:brightness(1.1)}
 .chip.bad{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.3);color:var(--bad)}
 .chip.neutral{background:#0e1528;color:#c7d2e2}
 .group{display:flex;align-items:center;gap:10px}
+.headerline{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.title{font-size:18px;font-weight:700}
 .log{font-family:ui-monospace,Menlo,Consolas;font-size:12px;background:#0c1222;border:1px solid #1b2442;border-radius:10px;padding:10px;white-space:pre-wrap;max-height:220px;overflow:auto}
 #app{display:grid;grid-template-columns:300px 1fr;height:100vh}
 """,
@@ -83,13 +86,13 @@ def ui2_js():
     return Response(
         r"""
 (function(){
-  // API endpoints + link Admin classico
+  // API endpoints — NOTA: prompts usa rotta dedicata /ui2/prompts
   const api={
     clients:'/admin/clients',
-    accounts:'/admin/accounts',
+    accounts:'/admin/accounts',       // lasciamo questo (toggle Bot) se il tuo backend già lo espone
     tokens:'/admin/tokens',
     logs:'/admin/logs',
-    prompts:(cid)=>`/admin/prompts/${cid}`,
+    prompts:(cid)=>`/ui2/prompts/${cid}`,  // <-- nuove route implementate in questo file
     adminUI:'/admin/ui'
   };
 
@@ -164,6 +167,17 @@ def ui2_js():
     }catch(err){ showFatal(err); console.error(err); }
   }
 
+  function headerLine(name){
+    return `
+      <div class="headerline">
+        <div class="title">${esc(name||'Cliente')}</div>
+        <div class="group">
+          <button id="refresh">Ricarica scheda</button>
+          <a href="/admin/ui" target="_blank"><button>Admin classico</button></a>
+        </div>
+      </div>`;
+  }
+
   function renderDetail({c,acc,toks,logs,prompts,promptsErr}){
     const d=document.getElementById('detail');
     const statusChip = acc?.active ? `<span class="chip ok">Attivo</span>` : `<span class="chip bad">Disattivo</span>`;
@@ -178,9 +192,9 @@ def ui2_js():
           <div class="row"><input id="fallback" type="text" placeholder="Fallback" value="${(prompts?.fallback??'').replaceAll('"','&quot;')}"></div>
           <div class="row"><input id="handoff" type="text" placeholder="Handoff" value="${(prompts?.handoff??'').replaceAll('"','&quot;')}"></div>
           <div class="row"><input id="legal" type="text" placeholder="Legal disclaimer" value="${(prompts?.legal??'').replaceAll('"','&quot;')}"></div>
-          <div class="row">
-            <button id="savep">Salva prompt</button>
-            <span id="ps" class="hint"></span>
+          <div class="row" style="justify-content:flex-end">
+            <span id="ps" class="hint" style="margin-right:8px"></span>
+            <button id="savep" class="primary">Salva modifiche</button>
           </div>
         </div>`;
     } else {
@@ -190,18 +204,18 @@ def ui2_js():
           <h3>Prompt cliente</h3>
           <div class="row">
             <span class="chip neutral">Sezione disabilitata</span>
-            <span class="hint">/admin/prompts/{client_id} non disponibile (${esc(info)}).</span>
+            <span class="hint">/ui2/prompts/{client_id} non disponibile (${esc(info)}).</span>
           </div>
           <div class="row">
-            <a href="/admin/ui" target="_blank"><button>Apri Admin classico</button></a>
             <button id="retryPrompts">Riprova</button>
+            <a href="/admin/ui" target="_blank"><button>Admin classico</button></a>
           </div>
         </div>`;
     }
 
     d.innerHTML=`
       <div class="card">
-        <h3>Account</h3>
+        ${headerLine(c?.name||c?.company||('Cliente #'+c.id))}
         <div class="row">
           <div class="kv"><b>Client ID</b> ${String(c.id)}</div>
           <div class="kv"><b>IG</b> ${acc?('@'+acc.username):'—'}</div>
@@ -219,9 +233,6 @@ def ui2_js():
             <span id="bots" class="hint"></span>
           </div>
         </div>
-        <div class="row">
-          <button id="refresh">Ricarica scheda</button>
-        </div>
       </div>
 
       ${promptsCard}
@@ -237,20 +248,21 @@ def ui2_js():
       </div>
     `;
 
-    $('#refresh').onclick=()=>select(c.id);
+    // azioni
+    const refresh=$('#refresh'); if(refresh){ refresh.onclick=()=>select(c.id); }
 
     const bot=$('#bot'), bots=$('#bots'), botchip=$('#botchip');
     if(bot&&acc){
       bot.onchange=async()=>{
         try{
           bots.textContent='…';
-          await fetch('/admin/accounts',{method:'PATCH',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({ig_user_id:acc.ig_user_id,bot_enabled:bot.checked})});
+          await fetch(api.accounts,{method:'PATCH',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({ig_user_id:acc.ig_user_id,bot_enabled:bot.checked})});
           botchip.textContent = bot.checked ? 'ON' : 'OFF';
           botchip.className = 'chip ' + (bot.checked ? 'ok' : 'bad');
           bots.textContent='Salvato';
         }catch(e){
           bots.textContent='Errore';
-          bot.checked=!bot.checked; // rollback
+          bot.checked=!bot.checked; // rollback se fallisce
         }
       };
     }
@@ -275,9 +287,7 @@ def ui2_js():
         }catch(e){ ps.textContent='Errore'; }
       };
     }
-
-    const retry=$('#retryPrompts');
-    if(retry){ retry.onclick=()=>select(c.id); }
+    const retry=$('#retryPrompts'); if(retry){ retry.onclick=()=>select(c.id); }
   }
 
   function showFatal(msg){
@@ -291,6 +301,21 @@ def ui2_js():
 """,
         media_type="application/javascript"
     )
+
+# -----------------------------------------------------------
+# Endpoint Admin classico (ponte, evita 404)
+# -----------------------------------------------------------
+@app.get("/admin/ui", response_class=HTMLResponse)
+def admin_ui_bridge():
+    # pagina ponte: prova a rimandare al vecchio UI (se esiste /ui/clients)
+    return """<!doctype html><html lang="it"><head><meta charset="utf-8">
+<title>Admin classico</title></head><body style="font-family:system-ui;padding:20px">
+<h2>Admin classico</h2>
+<p>Se il vecchio pannello è disponibile, lo trovi qui:
+  <a href="/ui/clients">/ui/clients</a>
+</p>
+<p>In alternativa puoi usare la nuova interfaccia: <a href="/ui2">/ui2</a></p>
+</body></html>"""
 
 # -----------------------------------------------------------
 # Static (facoltativo)
@@ -308,35 +333,35 @@ try:
 except Exception as e:
     print("Meta webhook router non caricato:", e)
 
-# Admin API JSON
+# Admin API JSON (clients/accounts/tokens/logs)
 try:
     from app.routers import admin_api
     app.include_router(admin_api.router)
 except Exception as e:
     print("Admin API router non caricato:", e)
 
-# Admin Prompts JSON
+# Admin Prompts JSON (se c'è; ma noi usiamo /ui2/prompts/*)
 try:
     from app.routers import admin_prompts
     app.include_router(admin_prompts.router)
 except Exception as e:
     print("Admin Prompts router non caricato:", e)
 
-# Admin UI classica (/admin/ui)
+# Admin UI classica (se esiste)
 try:
     from app.admin_ui.routes import router as admin_ui_router
     app.include_router(admin_ui_router)
 except Exception as e:
     print("Admin UI router non caricato:", e)
 
-# Admin client prompts (overview)
+# Admin client prompts (overview) — opzionale
 try:
     from app.routers import admin_client_prompts
     app.include_router(admin_client_prompts.router)
 except Exception as e:
     print("Admin Client Prompts router non caricato:", e)
 
-# Public UI (/c/*)
+# Public UI (/c/*) — opzionale
 try:
     from app.public_ui.routes import router as public_ui_router  # type: ignore
     app.include_router(public_ui_router)
@@ -378,10 +403,7 @@ async def security_headers(request: Request, call_next):
             "Cache-Control": "no-store",
             "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
             "Content-Security-Policy": (
-                "default-src 'self'; "
-                "script-src 'self'; "
-                "style-src 'self'; "
-                "img-src 'self' data:"
+                "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:"
             ),
         }
     )
@@ -407,7 +429,7 @@ except Exception:
         return None
 
 # -----------------------------------------------------------
-# SCHEMA SQL (schema: mfai_app)
+# SCHEMA SQL
 # -----------------------------------------------------------
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS mfai_app.clients (
@@ -492,16 +514,12 @@ def _split_sql(sql: str):
 @app.on_event("startup")
 async def ensure_schema():
     async with engine.begin() as conn:
-        # Schema + search_path
         await conn.exec_driver_sql("CREATE SCHEMA IF NOT EXISTS mfai_app AUTHORIZATION mfai_owner;")
         await conn.exec_driver_sql("SET search_path TO mfai_app;")
-        # Debug identità
         who = (await conn.execute(text("SELECT current_user, current_schema();"))).first()
         print("DB identity:", who)
-        # Crea/aggiorna oggetti
         for stmt in _split_sql(SCHEMA_SQL):
             await conn.exec_driver_sql(stmt)
-        # Seed demo (opzionale)
         if os.getenv("PUBLIC_SEED_DEMO", "1") == "1":
             await conn.exec_driver_sql("""
             DO $$
@@ -744,3 +762,45 @@ async def admin_client_overview(client_id: int):
         """), {"cid": client_id})).mappings().all()
 
     return {"client": client, "ig_accounts": ig_accounts, "public_spaces": spaces, "active_tokens": tokens}
+
+# -----------------------------------------------------------
+# Prompts endpoints dedicati per /ui2  (niente 405)
+# -----------------------------------------------------------
+class ClientPrompts(BaseModel):
+    greeting: str = ""
+    fallback: str = ""
+    handoff: str = ""
+    legal: str = ""
+
+@app.get("/ui2/prompts/{client_id}")
+async def ui2_get_prompts(client_id: int):
+    """Ritorna i 4 prompts come JSON semplice."""
+    async with engine.connect() as conn:
+        rows = (await conn.execute(text("""
+          SELECT key, value
+          FROM mfai_app.client_prompts
+          WHERE client_id = :cid
+        """), {"cid": client_id})).mappings().all()
+    data: Dict[str, str] = {r["key"]: r["value"] for r in rows}
+    return {
+        "greeting": data.get("greeting", ""),
+        "fallback": data.get("fallback", ""),
+        "handoff":  data.get("handoff", ""),
+        "legal":    data.get("legal", ""),
+    }
+
+@app.put("/ui2/prompts/{client_id}")
+async def ui2_put_prompts(client_id: int, body: ClientPrompts):
+    """Upsert dei 4 prompts nel DB."""
+    async with engine.begin() as conn:
+        for k, v in body.model_dump().items():
+            await conn.execute(text("""
+              INSERT INTO mfai_app.client_prompts (client_id, key, value)
+              VALUES (:cid, :k, :v)
+              ON CONFLICT (client_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+            """), {"cid": client_id, "k": k, "v": v})
+    return {"status": "ok"}
+
+# -----------------------------------------------------------
+# Static & router opzionali (fine)
+# -----------------------------------------------------------
