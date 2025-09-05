@@ -76,10 +76,13 @@ async def security_headers(request: Request, call_next):
             "Cache-Control": "no-store",
             "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
             "Content-Security-Policy": (
-                "default-src 'self'; "
-                "style-src 'self' https://cdn.jsdelivr.net; "
-                "img-src 'self' data:"
-            ),
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "img-src 'self' data:"
+),
+
+            
         }
     )
     return resp
