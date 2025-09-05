@@ -1,12 +1,12 @@
 # ============================================================
-# MF.AI — FastAPI (main.py) — UI /ui2 + Prompts + Bot FIX
+# MF.AI — FastAPI (main.py) — UI /ui2 + Prompts + Bot + Logs
 # ============================================================
 
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, Body
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -84,19 +84,19 @@ def ui2_js():
     return Response(
         r"""
 (function(){
-  // API endpoints — TUTTO qui: /admin/accounts GET+PATCH per BOT
+  // API endpoints usati dalla UI
   const api={
     clients:'/admin/clients',
-    accounts:'/admin/accounts',       // <-- definito in questo file (GET, PATCH)
-    tokens:'/admin/tokens',
-    logs:'/admin/logs',
-    prompts:(cid)=>`/ui2/prompts/${cid}`,  // <-- definito in questo file (GET, PUT)
+    accounts:'/admin/accounts',          // GET elenco + PATCH toggle bot (definiti sotto)
+    tokens:'/admin/tokens',              // GET elenco token (definito sotto)
+    logs:'/admin/logs',                  // GET logs (definito sotto)
+    prompts:(cid)=>`/ui2/prompts/${cid}`,// GET/PUT prompts (definito sotto)
     adminUI:'/admin/ui'
   };
 
   const state={clients:[],accounts:[],tokens:[],selected:null};
   const $=(s,el=document)=>el.querySelector(s);
-  const esc=(s)=> (s??"").replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;","\">":"&gt;"}[m]));
+  const esc=(s)=> (s??"").replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[m]));
 
   async function j(u,o={}){const r=await fetch(u,{...o,credentials:'include'});if(!r.ok){const t=await r.text().catch(()=> "");throw new Error(`HTTP ${r.status} ${r.statusText} on ${u}\n${t}`);}return r.json();}
 
@@ -127,7 +127,11 @@ def ui2_js():
   async function boot(){
     try{
       $('#hint').textContent='Carico…';
-      const [c,a,t]=await Promise.all([j(api.clients),j(api.accounts),j(api.tokens).catch(()=>[])]);
+      const [c,a,t]=await Promise.all([
+        j(api.clients),
+        j(api.accounts),
+        j(api.tokens).catch(()=>[])
+      ]);
       state.clients=c; state.accounts=a; state.tokens=t;
       renderList(); $('#hint').textContent=`Clienti: ${c.length}`;
       $('#q').addEventListener('input',e=>renderList(e.target.value));
@@ -181,7 +185,6 @@ def ui2_js():
     const statusChip = acc?.active ? `<span class="chip ok">Attivo</span>` : `<span class="chip bad">Disattivo</span>`;
     const botChip = acc?.bot_enabled ? `<span id="botchip" class="chip ok">ON</span>` : `<span id="botchip" class="chip bad">OFF</span>`;
 
-    // BOT buttons (niente switch)
     const botButtons = acc ? `
       <div class="group" id="botButtons">
         <button id="btnBotOn"  class="primary">Attiva bot</button>
@@ -259,11 +262,9 @@ def ui2_js():
           headers:{'Content-Type':'application/json'},
           body:JSON.stringify({ ig_user_id: acc.ig_user_id, bot_enabled: enabled })
         });
-        // Sync UI + stato locale
         botchip.textContent = enabled ? 'ON' : 'OFF';
         botchip.className = 'chip ' + (enabled ? 'ok' : 'bad');
         bots.textContent='Salvato';
-        // Aggiorna anche state.accounts
         const idx = state.accounts.findIndex(a=>a.id===acc.id);
         if(idx>-1){ state.accounts[idx].bot_enabled = enabled; }
       }catch(e){
@@ -333,20 +334,13 @@ if os.path.isdir("app/admin_ui/static"):
     app.mount("/static", StaticFiles(directory="app/admin_ui/static"), name="static")
 
 # -----------------------------------------------------------
-# Router esterni (import safe)
+# Router esterni (import safe — opzionali)
 # -----------------------------------------------------------
 try:
     from app.routers.meta_webhook import router as meta_webhook_router
     app.include_router(meta_webhook_router)
 except Exception as e:
     print("Meta webhook router non caricato:", e)
-
-# (gli altri router possono esistere o no; qui non servono per il bot)
-try:
-    from app.routers import admin_client_prompts
-    app.include_router(admin_client_prompts.router)
-except Exception as e:
-    print("Admin Client Prompts router non caricato:", e)
 
 try:
     from app.public_ui.routes import router as public_ui_router  # type: ignore
@@ -503,15 +497,14 @@ async def ensure_schema():
     async with engine.begin() as conn:
         await conn.exec_driver_sql("CREATE SCHEMA IF NOT EXISTS mfai_app AUTHORIZATION mfai_owner;")
         await conn.exec_driver_sql("SET search_path TO mfai_app;")
-        # Crea/aggiorna oggetti
         for stmt in _split_sql(SCHEMA_SQL):
             await conn.exec_driver_sql(stmt)
-        # Safety: aggiungi colonna bot_enabled se mancante
+        # safety: aggiungi colonna bot_enabled se mancante
         await conn.exec_driver_sql("""
           ALTER TABLE mfai_app.instagram_accounts
           ADD COLUMN IF NOT EXISTS bot_enabled BOOLEAN NOT NULL DEFAULT FALSE;
         """)
-        # Seed demo opzionale
+        # seed demo opzionale
         if os.getenv("PUBLIC_SEED_DEMO", "1") == "1":
             await conn.exec_driver_sql("""
             DO $$
@@ -563,7 +556,7 @@ async def db_health():
         return {"db": r.scalar_one()}
 
 # -----------------------------------------------------------
-# Admin JSON minimi che servono alla UI
+# Admin JSON minimi che servono alla UI /ui2
 # -----------------------------------------------------------
 # 1) Clients (lista)
 @app.get("/admin/clients")
@@ -574,6 +567,10 @@ async def admin_clients():
     return rows
 
 # 2) Accounts (GET lista + PATCH toggle bot)
+class PatchAccountPayload(BaseModel):
+    ig_user_id: str
+    bot_enabled: bool
+
 @app.get("/admin/accounts")
 async def admin_accounts():
     q = text("""
@@ -585,10 +582,6 @@ async def admin_accounts():
     async with engine.connect() as conn:
         rows = (await conn.execute(q)).mappings().all()
     return rows
-
-class PatchAccountPayload(BaseModel):
-    ig_user_id: str
-    bot_enabled: bool
 
 @app.patch("/admin/accounts")
 async def admin_accounts_patch(body: PatchAccountPayload):
@@ -604,6 +597,85 @@ async def admin_accounts_patch(body: PatchAccountPayload):
         if not row:
             raise HTTPException(status_code=404, detail="Instagram account non trovato")
     return {"status": "ok", "ig_user_id": ig, "bot_enabled": body.bot_enabled}
+
+# 3) Logs (GET)
+@app.get("/admin/logs")
+async def admin_logs(
+    client_id: Optional[int] = Query(None),
+    ig_account_id: Optional[int] = Query(None),
+    limit: int = Query(30, ge=1, le=500),
+):
+    if client_id:
+        q = text("""
+            SELECT ml.id, ml.ig_account_id, ml.direction, ml.payload, ml.created_at
+            FROM mfai_app.message_logs ml
+            WHERE ml.ig_account_id IN (
+              SELECT ia.id FROM mfai_app.instagram_accounts ia WHERE ia.client_id = :cid
+            )
+            ORDER BY ml.created_at DESC
+            LIMIT :lim
+        """)
+        params = {"cid": client_id, "lim": limit}
+    elif ig_account_id:
+        q = text("""
+            SELECT ml.id, ml.ig_account_id, ml.direction, ml.payload, ml.created_at
+            FROM mfai_app.message_logs ml
+            WHERE ml.ig_account_id = :aid
+            ORDER BY ml.created_at DESC
+            LIMIT :lim
+        """)
+        params = {"aid": ig_account_id, "lim": limit}
+    else:
+        q = text("""
+            SELECT ml.id, ml.ig_account_id, ml.direction, ml.payload, ml.created_at
+            FROM mfai_app.message_logs ml
+            ORDER BY ml.created_at DESC
+            LIMIT :lim
+        """)
+        params = {"lim": limit}
+
+    async with engine.connect() as conn:
+        rows = (await conn.execute(q, params)).mappings().all()
+    return rows
+
+# 4) Tokens (GET elenco “safe”)
+@app.get("/admin/tokens")
+async def admin_tokens(
+    client_id: Optional[int] = Query(None),
+    ig_account_id: Optional[int] = Query(None),
+    limit: int = Query(500, ge=1, le=2000),
+):
+    base = """
+        SELECT t.id, t.ig_account_id, t.expires_at, t.long_lived, t.active, t.created_at
+        FROM mfai_app.tokens t
+    """
+    params: Dict[str, object] = {"lim": limit}
+
+    if client_id:
+        q = text(base + """
+            WHERE t.ig_account_id IN (
+              SELECT ia.id FROM mfai_app.instagram_accounts ia WHERE ia.client_id = :cid
+            )
+            ORDER BY t.created_at DESC
+            LIMIT :lim
+        """)
+        params["cid"] = client_id
+    elif ig_account_id:
+        q = text(base + """
+            WHERE t.ig_account_id = :aid
+            ORDER BY t.created_at DESC
+            LIMIT :lim
+        """)
+        params["aid"] = ig_account_id
+    else:
+        q = text(base + """
+            ORDER BY t.created_at DESC
+            LIMIT :lim
+        """)
+
+    async with engine.connect() as conn:
+        rows = (await conn.execute(q, params)).mappings().all()
+    return rows
 
 # -----------------------------------------------------------
 # Prompts endpoints dedicati per /ui2
@@ -642,7 +714,7 @@ async def ui2_put_prompts(client_id: int, body: ClientPrompts):
     return {"status": "ok"}
 
 # -----------------------------------------------------------
-# OAuth callback (se ti serve)
+# OAuth callback (se serve)
 # -----------------------------------------------------------
 @app.get("/oauth/callback")
 async def oauth_callback(request: Request):
@@ -653,7 +725,7 @@ async def oauth_callback(request: Request):
     return {"status": "ok", "received_code": True, "code_preview": (code[:12] + "..."), "state": state}
 
 # -----------------------------------------------------------
-# Token utilities (come prima)
+# Token utilities
 # -----------------------------------------------------------
 class SaveTokenPayload(BaseModel):
     token: str = Field(..., min_length=5)
@@ -667,13 +739,6 @@ class RefreshTokenPayload(BaseModel):
     ig_user_id: str = Field(..., min_length=3)
     token: str = Field(..., min_length=5)
     expires_in_days: int = Field(default=60, ge=1, le=365)
-
-API_KEY = os.getenv("API_KEY", "")
-api_key_header = APIKeyHeader(name="x-api-key", auto_error=False)
-
-async def require_api_key(key: Optional[str] = Depends(api_key_header)) -> None:
-    if not API_KEY or key != API_KEY:
-        raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 @app.post("/save-token", dependencies=[Depends(require_api_key)])
 async def save_token(data: SaveTokenPayload):
@@ -749,65 +814,3 @@ async def refresh_token(data: RefreshTokenPayload):
           VALUES (:ig, :token, :exp, TRUE, TRUE)
         """), {"ig": ig_account_id, "token": data.token, "exp": exp})
     return {"status": "ok", "ig_user_id": data.ig_user_id, "expires_at": exp.isoformat()}
-
-@app.get("/tokens/expiring")
-async def tokens_expiring(days: int = 10):
-    threshold = datetime.now(timezone.utc) + timedelta(days=days)
-    q = text("""
-        SELECT ia.username, ia.ig_user_id, t.id AS token_id, t.expires_at
-        FROM mfai_app.tokens t
-        JOIN mfai_app.instagram_accounts ia ON ia.id = t.ig_account_id
-        WHERE t.active = TRUE AND t.expires_at IS NOT NULL AND t.expires_at <= :threshold
-        ORDER BY t.expires_at ASC
-        LIMIT 200
-    """)
-    async with engine.connect() as conn:
-        rows = (await conn.execute(q, {"threshold": threshold})).mappings().all()
-    return {"items": rows}
-
-# -----------------------------------------------------------
-# Admin UI ponte
-# -----------------------------------------------------------
-@app.get("/admin/ui", response_class=HTMLResponse)
-def admin_ui_bridge():
-    return """<!doctype html><html lang="it"><head><meta charset="utf-8">
-<title>Admin classico</title></head><body style="font-family:system-ui;padding:20px">
-<h2>Admin classico</h2>
-<p>Se il vecchio pannello è disponibile, lo trovi qui:
-  <a href="/ui/clients">/ui/clients</a>
-</p>
-<p>Oppure usa la nuova interfaccia: <a href="/ui2">/ui2</a></p>
-</body></html>"""
-
-# -----------------------------------------------------------
-# CORS + Security headers
-# -----------------------------------------------------------
-ALLOWED_ORIGINS = [
-    "https://mid-ranna-soluzionidigitaliroma-f8d1ef2a.koyeb.app",
-    "https://api.soluzionidigitali.roma.it",
-]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-@app.middleware("http")
-async def security_headers(request: Request, call_next):
-    resp = await call_next(request)
-    resp.headers.update(
-        {
-            "X-Frame-Options": "DENY",
-            "X-Content-Type-Options": "nosniff",
-            "Referrer-Policy": "no-referrer",
-            "Permissions-Policy": "camera=(), geolocation=(), microphone=()",
-            "Cache-Control": "no-store",
-            "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
-            "Content-Security-Policy": (
-                "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:"
-            ),
-        }
-    )
-    return resp
