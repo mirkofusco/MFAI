@@ -19,6 +19,14 @@ from app.db import engine  # engine async verso Neon
 
 APP_NAME = "MF.AI"
 app = FastAPI(title=APP_NAME)
+from fastapi.responses import PlainTextResponse  # se già importato, ok
+
+@app.get("/ui2", response_class=PlainTextResponse)
+def ui2_probe():
+    return "UI2 OK"
+
+
+
 
 # -----------------------------------------------------------
 # Mount static se presente (non obbligatorio)
