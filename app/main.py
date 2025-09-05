@@ -1,5 +1,5 @@
 # ============================================================
-# MF.AI — FastAPI (main.py) — UI /ui2 CSP-safe
+# MF.AI — FastAPI (main.py) — UI /ui2 CSP-safe e Admin
 # ============================================================
 
 import os
@@ -20,9 +20,9 @@ from app.db import engine  # engine async verso Neon
 APP_NAME = "MF.AI"
 app = FastAPI(title=APP_NAME)
 
-# =========================
-# UI /ui2 (NESSUN INLINE)
-# =========================
+# -----------------------------------------------------------
+# UI /ui2 (Nessun inline; file serviti localmente, CSP-friendly)
+# -----------------------------------------------------------
 @app.get("/ui2", response_class=HTMLResponse)
 def ui2_page():
     return """<!doctype html>
@@ -42,7 +42,7 @@ def ui2_page():
 @app.get("/ui2.css")
 def ui2_css():
     return Response(
-        """:root{--bg:#0b0f19;--panel:#12182a;--text:#e8eef6;--muted:#8ea0b5;--border:#1f2942;--accent:#4da3ff;--ok:#22c55e;--bad:#ef4444}
+        """:root{--bg:#0b0f19;--panel:#12182a;--text:#e8eef6;--muted:#8ea0b5;--border:#1f2942;--accent:#4da3ff;--ok:#22c55e;--bad:#ef4444;--btn:#0f1730}
 *{box-sizing:border-box}html,body{height:100%}body{margin:0;background:var(--bg);color:var(--text);font:14px system-ui,Segoe UI,Roboto}
 .app{display:grid;grid-template-columns:300px 1fr;height:100vh}
 .side{border-right:1px solid var(--border);background:var(--panel);display:flex;flex-direction:column}
@@ -53,18 +53,25 @@ def ui2_css():
 .item:hover{background:#0e162c}.item.active{outline:1px solid var(--accent);background:#0e1a33}
 .item h4{margin:0 0 4px 0;font-size:14px}.meta{color:var(--muted);font-size:12px}
 .main{display:flex;flex-direction:column}
-.bar{display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--border);padding:10px;background:#0d1426}
+.bar{display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--border);padding:10px;background:#0d1426;justify-content:space-between}
 .crumb{padding:6px 10px;border:1px solid var(--border);border-radius:999px}
+.hint{color:var(--muted)}
 .content{padding:16px;overflow:auto}
 .card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:14px}
-.row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:10px 0}
 .kv{display:flex;gap:6px;align-items:center;background:#0e1528;border:1px solid var(--border);padding:8px 10px;border-radius:10px}
+.kv b{opacity:.9}
 input[type="text"],textarea{width:100%;padding:10px;border-radius:10px;border:1px solid var(--border);background:#0d1322;color:var(--text);font:13px}
-button{padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:#0f1730;color:var(--text);cursor:pointer}
-.switch input{display:none}.switch .track{width:40px;height:22px;border-radius:999px;background:#32405e;position:relative}
-.switch .thumb{position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.2s}
-.switch input:checked + .track{background:var(--ok)}.switch input:checked + .track .thumb{left:20px}
-.status.ok{color:var(--ok)}.status.bad{color:var(--bad)}.empty{opacity:.7}
+button{padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--btn);color:var(--text);cursor:pointer}
+button:hover{filter:brightness(1.1)}
+.switch input{display:none}.switch .track{width:46px;height:26px;border-radius:999px;background:#32405e;position:relative}
+.switch .thumb{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:.18s}
+.switch input:checked + .track{background:var(--ok)}.switch input:checked + .track .thumb{left:23px}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid var(--border);border-radius:999px;font-size:12px}
+.chip.ok{background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.3);color:var(--ok)}
+.chip.bad{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.3);color:var(--bad)}
+.chip.neutral{background:#0e1528;color:#c7d2e2}
+.group{display:flex;align-items:center;gap:10px}
 .log{font-family:ui-monospace,Menlo,Consolas;font-size:12px;background:#0c1222;border:1px solid #1b2442;border-radius:10px;padding:10px;white-space:pre-wrap;max-height:220px;overflow:auto}
 #app{display:grid;grid-template-columns:300px 1fr;height:100vh}
 """,
@@ -76,12 +83,23 @@ def ui2_js():
     return Response(
         r"""
 (function(){
-  const api={clients:'/admin/clients',accounts:'/admin/accounts',tokens:'/admin/tokens',logs:'/admin/logs',prompts:(cid)=>`/admin/prompts/${cid}`};
+  // API endpoints + link Admin classico
+  const api={
+    clients:'/admin/clients',
+    accounts:'/admin/accounts',
+    tokens:'/admin/tokens',
+    logs:'/admin/logs',
+    prompts:(cid)=>`/admin/prompts/${cid}`,
+    adminUI:'/admin/ui'
+  };
+
   const state={clients:[],accounts:[],tokens:[],selected:null};
   const $=(s,el=document)=>el.querySelector(s);
-  const esc=s=>s?.replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]))||"";
+  const esc=(s)=> (s??"").replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[m]));
+
   async function j(u,o={}){const r=await fetch(u,{...o,credentials:'include'});if(!r.ok){const t=await r.text().catch(()=> "");throw new Error(`HTTP ${r.status} ${r.statusText} on ${u}\n${t}`);}return r.json();}
 
+  // Shell
   const root=document.getElementById('app');
   root.innerHTML=`
     <aside class="side">
@@ -91,20 +109,19 @@ def ui2_js():
     </aside>
     <main class="main">
       <div class="bar">
-        <div id="crumb" class="crumb">Nessun cliente</div>
-        <span id="hint" style="color:#8ea0b5"></span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div id="crumb" class="crumb">Nessun cliente</div>
+          <span id="hint" class="hint"></span>
+        </div>
+        <div>
+          <a href="/admin/ui" target="_blank"><button title="Apri l'Admin classico in una nuova scheda">Admin classico</button></a>
+        </div>
       </div>
       <div id="detail" class="content">
         <div class="card empty">Seleziona un cliente dalla lista.</div>
       </div>
     </main>
   `;
-
-  function showFatal(msg){
-    const app=document.getElementById('app');
-    app.innerHTML=`<div style="padding:20px;font-family:system-ui"><h2>⚠️ Errore UI</h2>
-    <pre style="white-space:pre-wrap;background:#111;color:#eee;padding:12px;border-radius:8px;border:1px solid #333;max-height:50vh;overflow:auto">${esc(String(msg))}</pre></div>`;
-  }
 
   async function boot(){
     try{
@@ -117,7 +134,7 @@ def ui2_js():
   }
 
   function renderList(f=''){
-    const box=document.getElementById('list'); box.innerHTML='';
+    const box=$('#list'); box.innerHTML='';
     const q=(f||'').trim().toLowerCase();
     const items=state.clients.filter(c=>{const s=`${c.id||''} ${c.name||''} ${c.company||''}`.toLowerCase(); return !q||s.includes(q);});
     for(const c of items){
@@ -131,87 +148,152 @@ def ui2_js():
 
   async function select(clientId){
     try{
-      state.selected=clientId; renderList(document.getElementById('q').value||'');
+      state.selected=clientId; renderList($('#q').value||'');
       const c=state.clients.find(x=>x.id===clientId);
       const acc=state.accounts.find(a=>a.client_id===clientId);
-      document.getElementById('crumb').textContent=c?.name||c?.company||('Cliente #'+clientId);
-      document.getElementById('hint').textContent='Carico scheda…';
-      let prompts=null, logs=[];
-      try{prompts=await j(api.prompts(clientId));}catch{}
-      try{logs=await j(api.logs+`?client_id=${clientId}&limit=30`);}catch{}
+      $('#crumb').textContent=c?.name||c?.company||('Cliente #'+clientId);
+      $('#hint').textContent='Carico scheda…';
+
+      let prompts=null, promptsErr=null, logs=[];
+      try{ prompts=await j(api.prompts(clientId)); }catch(e){ promptsErr=String(e); }
+      try{ logs=await j(api.logs+`?client_id=${clientId}&limit=30`);}catch(_e){}
+
       const toks=state.tokens.filter(t=>t.ig_account_id===acc?.id);
-      renderDetail({c,acc,toks,logs,prompts});
-      document.getElementById('hint').textContent='Pronto';
+      renderDetail({c,acc,toks,logs,prompts,promptsErr});
+      $('#hint').textContent='Pronto';
     }catch(err){ showFatal(err); console.error(err); }
   }
 
-  function renderDetail({c,acc,toks,logs,prompts}){
+  function renderDetail({c,acc,toks,logs,prompts,promptsErr}){
     const d=document.getElementById('detail');
+    const statusChip = acc?.active ? `<span class="chip ok">Attivo</span>` : `<span class="chip bad">Disattivo</span>`;
+    const botChip = acc?.bot_enabled ? `<span id="botchip" class="chip ok">ON</span>` : `<span id="botchip" class="chip bad">OFF</span>`;
+
+    let promptsCard='';
+    if(prompts){
+      promptsCard=`
+        <div class="card">
+          <h3>Prompt cliente</h3>
+          <div class="row"><input id="greet" type="text" placeholder="Greeting" value="${(prompts?.greeting??'').replaceAll('"','&quot;')}"></div>
+          <div class="row"><input id="fallback" type="text" placeholder="Fallback" value="${(prompts?.fallback??'').replaceAll('"','&quot;')}"></div>
+          <div class="row"><input id="handoff" type="text" placeholder="Handoff" value="${(prompts?.handoff??'').replaceAll('"','&quot;')}"></div>
+          <div class="row"><input id="legal" type="text" placeholder="Legal disclaimer" value="${(prompts?.legal??'').replaceAll('"','&quot;')}"></div>
+          <div class="row">
+            <button id="savep">Salva prompt</button>
+            <span id="ps" class="hint"></span>
+          </div>
+        </div>`;
+    } else {
+      const info = promptsErr ? promptsErr.split('\n')[0] : 'endpoint non raggiungibile';
+      promptsCard=`
+        <div class="card">
+          <h3>Prompt cliente</h3>
+          <div class="row">
+            <span class="chip neutral">Sezione disabilitata</span>
+            <span class="hint">/admin/prompts/{client_id} non disponibile (${esc(info)}).</span>
+          </div>
+          <div class="row">
+            <a href="/admin/ui" target="_blank"><button>Apri Admin classico</button></a>
+            <button id="retryPrompts">Riprova</button>
+          </div>
+        </div>`;
+    }
+
     d.innerHTML=`
       <div class="card">
         <h3>Account</h3>
         <div class="row">
-          <div class="kv"><b>Client ID</b> ${esc(String(c.id))}</div>
-          <div class="kv"><b>IG</b> ${acc?('@'+esc(acc.username)):'—'}</div>
-          <div class="kv"><b>IG_USER_ID</b> ${esc(acc?.ig_user_id||'—')}</div>
-          <div class="kv"><b>Stato</b> <span class="${acc?.active?'status ok':'status bad'}">${acc?.active?'Attivo':'Disattivo'}</span></div>
+          <div class="kv"><b>Client ID</b> ${String(c.id)}</div>
+          <div class="kv"><b>IG</b> ${acc?('@'+acc.username):'—'}</div>
+          <div class="kv"><b>IG_USER_ID</b> ${acc?.ig_user_id||'—'}</div>
+          <div class="kv"><b>Stato</b> ${statusChip}</div>
         </div>
         <div class="row">
-          <label class="switch"><input id="bot" type="checkbox" ${acc?.bot_enabled?'checked':''} ${acc?'':'disabled'}><span class="track"><span class="thumb"></span></span></label>
-          <span>Bot abilitato</span><span id="bots" style="color:#8ea0b5"></span>
+          <div class="group">
+            <b>Bot</b>
+            <label class="switch">
+              <input id="bot" type="checkbox" ${acc?.bot_enabled?'checked':''} ${acc?'':'disabled'}>
+              <span class="track"><span class="thumb"></span></span>
+            </label>
+            ${botChip}
+            <span id="bots" class="hint"></span>
+          </div>
         </div>
-        <div class="row"><button id="refresh">Aggiorna</button></div>
+        <div class="row">
+          <button id="refresh">Ricarica scheda</button>
+        </div>
       </div>
-      <div class="card">
-        <h3>Prompt cliente</h3>
-        <div class="row"><input id="greet" type="text" placeholder="Greeting" value="${esc(prompts?.greeting||'')}"></div>
-        <div class="row"><input id="fallback" type="text" placeholder="Fallback" value="${esc(prompts?.fallback||'')}"></div>
-        <div class="row"><input id="handoff" type="text" placeholder="Handoff" value="${esc(prompts?.handoff||'')}"></div>
-        <div class="row"><input id="legal" type="text" placeholder="Legal disclaimer" value="${esc(prompts?.legal||'')}"></div>
-        <div class="row"><button id="savep" ${prompts===null?'disabled':''}>Salva prompt</button><span id="ps" style="color:#8ea0b5"></span></div>
-        ${prompts===null?'<div class="meta">/admin/prompts/{client_id} non disponibile: salvataggio disabilitato.</div>':''}
-      </div>
+
+      ${promptsCard}
+
       <div class="card">
         <h3>Token</h3>
         ${toks.length?`<div class="log">${toks.map(t=>`• ${t.long_lived?'LLT':'SLT'} | scade: ${new Date(t.expires_at).toLocaleString()} | active=${t.active}`).join('\n')}</div>`:'<div class="meta">Nessun token per questo account.</div>'}
       </div>
+
       <div class="card">
         <h3>Ultimi log</h3>
         ${logs?.length?`<div class="log">${logs.map(x=>`[${new Date(x.ts||x.created_at).toLocaleString()}] ${x.direction||''} ${x.payload?JSON.stringify(x.payload):''}`).join('\n')}</div>`:'<div class="meta">Nessun log recente.</div>'}
       </div>
     `;
-    document.getElementById('refresh').onclick=()=>select(c.id);
-    const bot=document.getElementById('bot'), bots=document.getElementById('bots');
+
+    $('#refresh').onclick=()=>select(c.id);
+
+    const bot=$('#bot'), bots=$('#bots'), botchip=$('#botchip');
     if(bot&&acc){
       bot.onchange=async()=>{
         try{
           bots.textContent='…';
           await fetch('/admin/accounts',{method:'PATCH',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({ig_user_id:acc.ig_user_id,bot_enabled:bot.checked})});
+          botchip.textContent = bot.checked ? 'ON' : 'OFF';
+          botchip.className = 'chip ' + (bot.checked ? 'ok' : 'bad');
           bots.textContent='Salvato';
-        }catch(e){ bots.textContent='Errore'; }
+        }catch(e){
+          bots.textContent='Errore';
+          bot.checked=!bot.checked; // rollback
+        }
       };
     }
-    const savep=document.getElementById('savep'), ps=document.getElementById('ps');
+
+    const savep=$('#savep'), ps=$('#ps');
     if(savep){
       savep.onclick=async()=>{
         try{
           ps.textContent='…';
-          await fetch(api.prompts(c.id),{method:'PUT',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({greeting:document.getElementById('greet').value,fallback:document.getElementById('fallback').value,handoff:document.getElementById('handoff').value,legal:document.getElementById('legal').value})});
+          await fetch(api.prompts(c.id),{
+            method:'PUT',
+            credentials:'include',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({
+              greeting:$('#greet').value,
+              fallback:$('#fallback').value,
+              handoff:$('#handoff').value,
+              legal:$('#legal').value
+            })
+          });
           ps.textContent='Salvato';
         }catch(e){ ps.textContent='Errore'; }
       };
     }
+
+    const retry=$('#retryPrompts');
+    if(retry){ retry.onclick=()=>select(c.id); }
   }
 
-  window.select=select;
-  boot();
+  function showFatal(msg){
+    const app=document.getElementById('app');
+    app.innerHTML=`<div style="padding:20px;font-family:system-ui"><h2>⚠️ Errore UI</h2>
+    <pre style="white-space:pre-wrap;background:#111;color:#eee;padding:12px;border-radius:8px;border:1px solid #333;max-height:50vh;overflow:auto">${esc(String(msg))}</pre></div>`;
+  }
+
+  try { boot(); } catch (e) { showFatal(e); console.error(e); }
 })();
 """,
         media_type="application/javascript"
     )
 
 # -----------------------------------------------------------
-# Mount static se presente (non obbligatorio)
+# Static (facoltativo)
 # -----------------------------------------------------------
 if os.path.isdir("app/admin_ui/static"):
     app.mount("/static", StaticFiles(directory="app/admin_ui/static"), name="static")
@@ -219,30 +301,42 @@ if os.path.isdir("app/admin_ui/static"):
 # -----------------------------------------------------------
 # Router esterni (import safe)
 # -----------------------------------------------------------
+# Webhook Meta
 try:
     from app.routers.meta_webhook import router as meta_webhook_router
     app.include_router(meta_webhook_router)
 except Exception as e:
     print("Meta webhook router non caricato:", e)
 
+# Admin API JSON
 try:
     from app.routers import admin_api
     app.include_router(admin_api.router)
 except Exception as e:
     print("Admin API router non caricato:", e)
 
+# Admin Prompts JSON
 try:
     from app.routers import admin_prompts
     app.include_router(admin_prompts.router)
 except Exception as e:
     print("Admin Prompts router non caricato:", e)
 
+# Admin UI classica (/admin/ui)
+try:
+    from app.admin_ui.routes import router as admin_ui_router
+    app.include_router(admin_ui_router)
+except Exception as e:
+    print("Admin UI router non caricato:", e)
+
+# Admin client prompts (overview)
 try:
     from app.routers import admin_client_prompts
     app.include_router(admin_client_prompts.router)
 except Exception as e:
     print("Admin Client Prompts router non caricato:", e)
 
+# Public UI (/c/*)
 try:
     from app.public_ui.routes import router as public_ui_router  # type: ignore
     app.include_router(public_ui_router)
@@ -250,7 +344,7 @@ except Exception as e:
     print("Public UI router non caricato:", e)
 
 # -----------------------------------------------------------
-# Templates (se usi Jinja2)
+# Templates (Jinja2 opzionali)
 # -----------------------------------------------------------
 templates = Jinja2Templates(directory="app/templates") if os.path.isdir("app/templates") else None
 
@@ -270,7 +364,7 @@ app.add_middleware(
 )
 
 # -----------------------------------------------------------
-# Security headers (CSP senza inline; UI serve file esterni)
+# Security headers (CSP: solo self; no inline)
 # -----------------------------------------------------------
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
@@ -294,7 +388,7 @@ async def security_headers(request: Request, call_next):
     return resp
 
 # -----------------------------------------------------------
-# API Key guard
+# API Key guard (per alcune POST/PUT)
 # -----------------------------------------------------------
 API_KEY = os.getenv("API_KEY", "")
 api_key_header = APIKeyHeader(name="x-api-key", auto_error=False)
@@ -304,7 +398,7 @@ async def require_api_key(key: Optional[str] = Depends(api_key_header)) -> None:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 # -----------------------------------------------------------
-# verify_admin (fallback se manca il modulo)
+# verify_admin (fallback se modulo assente)
 # -----------------------------------------------------------
 try:
     from app.security_admin import verify_admin
@@ -313,7 +407,7 @@ except Exception:
         return None
 
 # -----------------------------------------------------------
-# SCHEMA SQL
+# SCHEMA SQL (schema: mfai_app)
 # -----------------------------------------------------------
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS mfai_app.clients (
@@ -398,12 +492,16 @@ def _split_sql(sql: str):
 @app.on_event("startup")
 async def ensure_schema():
     async with engine.begin() as conn:
+        # Schema + search_path
         await conn.exec_driver_sql("CREATE SCHEMA IF NOT EXISTS mfai_app AUTHORIZATION mfai_owner;")
         await conn.exec_driver_sql("SET search_path TO mfai_app;")
+        # Debug identità
         who = (await conn.execute(text("SELECT current_user, current_schema();"))).first()
         print("DB identity:", who)
+        # Crea/aggiorna oggetti
         for stmt in _split_sql(SCHEMA_SQL):
             await conn.exec_driver_sql(stmt)
+        # Seed demo (opzionale)
         if os.getenv("PUBLIC_SEED_DEMO", "1") == "1":
             await conn.exec_driver_sql("""
             DO $$
@@ -460,6 +558,7 @@ async def db_health():
         r = await conn.execute(text("SELECT 'ok'"))
         return {"db": r.scalar_one()}
 
+# --- OAuth Callback Instagram ---
 @app.get("/oauth/callback")
 async def oauth_callback(request: Request):
     code = request.query_params.get("code")
@@ -492,6 +591,7 @@ async def save_token(data: SaveTokenPayload):
     try:
         exp = data.expires_at or (datetime.now(timezone.utc) + timedelta(days=60))
         async with engine.begin() as conn:
+            # 1) Upsert client
             res = await conn.execute(
                 text("""
                     INSERT INTO mfai_app.clients (name, email)
@@ -503,6 +603,7 @@ async def save_token(data: SaveTokenPayload):
             )
             client_id = res.scalar_one()
 
+            # 2) Upsert IG account
             res = await conn.execute(
                 text("""
                     INSERT INTO mfai_app.instagram_accounts (client_id, ig_user_id, username, active)
@@ -515,11 +616,13 @@ async def save_token(data: SaveTokenPayload):
             )
             ig_account_id = res.scalar_one()
 
+            # 3) Disattiva token attivo precedente
             await conn.execute(
                 text("UPDATE mfai_app.tokens SET active = FALSE WHERE ig_account_id = :ig AND active = TRUE"),
                 {"ig": ig_account_id},
             )
 
+            # 4) Inserisci nuovo token attivo
             await conn.execute(
                 text("""
                     INSERT INTO mfai_app.tokens (ig_account_id, access_token, expires_at, long_lived, active)
@@ -528,6 +631,7 @@ async def save_token(data: SaveTokenPayload):
                 {"ig_account_id": ig_account_id, "token": data.token, "expires_at": exp},
             )
 
+            # 5) Log tecnico
             await conn.execute(
                 text("INSERT INTO mfai_app.message_logs (ig_account_id, direction, payload) VALUES (:id,'in',:p)"),
                 {"id": ig_account_id, "p": f"Saved token (len={len(data.token)})"},
