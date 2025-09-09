@@ -194,21 +194,34 @@ def ui2_js():
       </div>` : '<span class="hint">Nessun account IG collegato.</span>';
 
     let promptsCard='';
-    if(prompts){
-      promptsCard=`
-        <div class="card">
-          <h3>Prompt cliente</h3>
-          <div class="row"><input id="greet" type="text" placeholder="Greeting" value="${(prompts?.greeting??'').replaceAll('"','&quot;')}"></div>
-          <div class="row"><input id="fallback" type="text" placeholder="Fallback" value="${(prompts?.fallback??'').replaceAll('"','&quot;')}"></div>
-          <div class="row"><input id="handoff" type="text" placeholder="Handoff" value="${(prompts?.handoff??'').replaceAll('"','&quot;')}"></div>
-          <div class="row"><input id="legal" type="text" placeholder="Legal disclaimer" value="${(prompts?.legal??'').replaceAll('"','&quot;')}"></div>
-          <div class="row" style="justify-content:flex-end">
-            <span id="ps" class="hint" style="margin-right:8px"></span>
-            <button id="savep" class="primary">Salva modifiche</button>
-          </div>
-        </div>`;
-    } else {
-      const info = promptsErr ? promptsErr.split('\n')[0] : 'endpoint non raggiungibile';
+if(prompts){
+  promptsCard=`
+    <div class="card">
+      <h3>Prompt cliente (unico)</h3>
+      <div class="row">
+        <textarea id="system" rows="8" placeholder="Scrivi qui il prompt completo...">${(prompts?.system??'').replaceAll('<','&lt;').replaceAll('>','&gt;')}</textarea>
+      </div>
+      <div class="row" style="justify-content:flex-end">
+        <span id="ps" class="hint" style="margin-right:8px"></span>
+        <button id="savep" class="primary">Salva</button>
+      </div>
+    </div>`;
+} else {
+  const info = promptsErr ? promptsErr.split('\n')[0] : 'endpoint non raggiungibile';
+  promptsCard=`
+    <div class="card">
+      <h3>Prompt cliente (unico)</h3>
+      <div class="row">
+        <span class="chip neutral">Sezione disabilitata</span>
+        <span class="hint">/ui2/prompts/{client_id} non disponibile (${info}).</span>
+      </div>
+      <div class="row">
+        <button id="retryPrompts">Riprova</button>
+        <a href="/admin/ui" target="_blank"><button>Admin classico</button></a>
+      </div>
+    </div>`;
+}
+
       promptsCard=`
         <div class="card">
           <h3>Prompt cliente</h3>
