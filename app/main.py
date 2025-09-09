@@ -81,9 +81,7 @@ button:hover{filter:brightness(1.1)}
 
 @app.get("/ui2.js")
 def ui2_js():
-    return Response(
-        r"""
-(function(){
+    JS = '''(function(){
   // API endpoints usati dalla UI
   var api = {
     clients: '/admin/clients',
@@ -100,14 +98,11 @@ def ui2_js():
     s = (s==null?'':String(s));
     return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
-  function repAll(str, find, repl){
-    return String(str).split(find).join(repl);
-  }
+  function repAll(str, find, repl){ return String(str).split(find).join(repl); }
   function j(u,o){
-    o = o||{};
-    o.credentials = 'include';
+    o = o||{}; o.credentials = 'include';
     return fetch(u,o).then(function(r){
-      if(!r.ok) return r.text().then(function(t){ throw new Error('HTTP '+r.status+' '+r.statusText+' on '+u+'\n'+t); });
+      if(!r.ok) return r.text().then(function(t){ throw new Error('HTTP '+r.status+' '+r.statusText+' on '+u+'\\n'+t); });
       return r.json();
     });
   }
@@ -126,7 +121,7 @@ def ui2_js():
     + '      <div id="crumb" class="crumb">Nessun cliente</div>'
     + '      <span id="hint" class="hint"></span>'
     + '    </div>'
-    + '    <div><a href="/admin/ui" target="_blank"><button title="Apri l\'Admin classico in una nuova scheda">Admin classico</button></a></div>'
+    + '    <div><a href="/admin/ui" target="_blank"><button title="Apri l\\'Admin classico in una nuova scheda">Admin classico</button></a></div>'
     + '  </div>'
     + '  <div id="detail" class="content"><div class="card empty">Seleziona un cliente dalla lista.</div></div>'
     + '</main>';
@@ -158,26 +153,25 @@ def ui2_js():
       return !q || s.indexOf(q) !== -1;
     });
     items.forEach(function(c){
-      var acc = state.accounts.find ? state.accounts.find(function(a){ return a.client_id===c.id; })
-                                    : (function(){ for(var i=0;i<state.accounts.length;i++){ if(state.accounts[i].client_id===c.id) return state.accounts[i]; } return null; })();
+      var acc = (function(){ for(var i=0;i<state.accounts.length;i++){ if(state.accounts[i].client_id===c.id) return state.accounts[i]; } return null; })();
       var el = document.createElement('div');
       var username = acc ? '@'+esc(acc.username) : '—';
-      var botEnabled = acc && acc.bot_enabled ? 'ON' : 'OFF';
+      var botEnabled = (acc && acc.bot_enabled) ? 'ON' : 'OFF';
       el.className = 'item' + (state.selected===c.id?' active':'');
       el.innerHTML = '<h4>' + esc(c.name||c.company||('Cliente #'+c.id)) + '</h4>'
                    + '<div class="meta">' + username + ' · Bot ' + botEnabled + '</div>';
       el.onclick = function(){ select(c.id); };
       box.appendChild(el);
     });
-    if(items.length===0){ box.innerHTML = '<div class="card empty">Nessun risultato</div>'; }
+    if(items.length===0) box.innerHTML='<div class="card empty">Nessun risultato</div>';
   }
 
   function select(clientId){
-    state.selected = clientId; renderList($('#q').value||'');
-    var c = (function(){ for(var i=0;i<state.clients.length;i++){ if(state.clients[i].id===clientId) return state.clients[i]; } return null; })();
-    var acc = (function(){ for(var i=0;i<state.accounts.length;i++){ if(state.accounts[i].client_id===clientId) return state.accounts[i]; } return null; })();
+    state.selected=clientId; renderList($('#q').value||'');
+    var c=(function(){ for(var i=0;i<state.clients.length;i++){ if(state.clients[i].id===clientId) return state.clients[i]; } return null; })();
+    var acc=(function(){ for(var i=0;i<state.accounts.length;i++){ if(state.accounts[i].client_id===clientId) return state.accounts[i]; } return null; })();
     $('#crumb').textContent = (c && (c.name||c.company)) ? (c.name||c.company) : ('Cliente #'+clientId);
-    $('#hint').textContent = 'Carico scheda…';
+    $('#hint').textContent='Carico scheda…';
 
     var prompts=null, promptsErr=null, logs=[];
     j(api.prompts(clientId)).then(function(p){ prompts=p; })
@@ -186,24 +180,21 @@ def ui2_js():
         return j(api.logs+'?client_id='+clientId+'&limit=30').then(function(l){ logs=l; }).catch(function(){});
       })
       .then(function(){
-        var toks = [];
-        if(acc){
-          for(var i=0;i<state.tokens.length;i++){ if(state.tokens[i].ig_account_id===acc.id) toks.push(state.tokens[i]); }
-        }
-        renderDetail({c:c, acc:acc, toks:toks, logs:logs, prompts:prompts, promptsErr:promptsErr});
+        var toks=[];
+        if(acc){ for(var i=0;i<state.tokens.length;i++){ if(state.tokens[i].ig_account_id===acc.id) toks.push(state.tokens[i]); } }
+        renderDetail({c:c,acc:acc,toks:toks,logs:logs,prompts:prompts,promptsErr:promptsErr});
         $('#hint').textContent='Pronto';
       })
       .catch(function(err){ showFatal(err); console.error(err); });
   }
 
   function headerLine(name){
-    return ''
-      + '<div class="headerline">'
-      + '  <div class="title">'+esc(name||'Cliente')+'</div>'
-      + '  <div class="group">'
-      + '    <button id="refresh">Ricarica scheda</button>'
-      + '    <a href="/admin/ui" target="_blank"><button>Admin classico</button></a>'
-      + '  </div>'
+    return '<div class="headerline">'
+      + '<div class="title">'+esc(name||'Cliente')+'</div>'
+      + '<div class="group">'
+      +   '<button id="refresh">Ricarica scheda</button>'
+      +   '<a href="/admin/ui" target="_blank"><button>Admin classico</button></a>'
+      + '</div>'
       + '</div>';
   }
 
@@ -216,14 +207,14 @@ def ui2_js():
 
     var botButtons = acc
       ? '<div class="group" id="botButtons">'
-          + '<button id="btnBotOn" class="primary">Attiva bot</button>'
+          + '<button id="btnBotOn"  class="primary">Attiva bot</button>'
           + '<button id="btnBotOff" class="danger">Disattiva bot</button>'
           + botChip
           + '<span id="bots" class="hint"></span>'
         + '</div>'
       : '<span class="hint">Nessun account IG collegato.</span>';
 
-    var promptsCard = '';
+    var promptsCard='';
     if(prompts){
       var val = prompts.system || '';
       val = repAll(repAll(val,'<','&lt;'),'>','&gt;');
@@ -237,12 +228,14 @@ def ui2_js():
         + '</div>'
         + '</div>';
     } else {
-      var info = promptsErr ? String(promptsErr).split('\n')[0] : 'endpoint non raggiungibile';
+      var info = promptsErr ? String(promptsErr).split('\\n')[0] : 'endpoint non raggiungibile';
       promptsCard =
         '<div class="card">'
         + '<h3>Prompt cliente (unico)</h3>'
-        + '<div class="row"><span class="chip neutral">Sezione disabilitata</span>'
-        + '<span class="hint">/ui2/prompts/{client_id} non disponibile ('+esc(info)+').</span></div>'
+        + '<div class="row">'
+        +   '<span class="chip neutral">Sezione disabilitata</span>'
+        +   '<span class="hint">/ui2/prompts/{client_id} non disponibile ('+esc(info)+').</span>'
+        + '</div>'
         + '<div class="row"><button id="retryPrompts">Riprova</button>'
         + '<a href="/admin/ui" target="_blank"><button>Admin classico</button></a></div>'
         + '</div>';
@@ -256,7 +249,7 @@ def ui2_js():
         var when = t.expires_at ? new Date(t.expires_at).toLocaleString() : '—';
         lines.push('• ' + (t.long_lived?'LLT':'SLT') + ' | scade: ' + when + ' | active=' + t.active);
       }
-      toksHtml = '<div class="log">'+esc(lines.join('\n'))+'</div>';
+      toksHtml = '<div class="log">'+esc(lines.join('\\n'))+'</div>';
     } else {
       toksHtml = '<div class="meta">Nessun token per questo account.</div>';
     }
@@ -271,7 +264,7 @@ def ui2_js():
         var payload = x.payload ? JSON.stringify(x.payload) : '';
         L.push('['+ts+'] '+dir+' '+payload);
       }
-      logsHtml = '<div class="log">'+esc(L.join('\n'))+'</div>';
+      logsHtml = '<div class="log">'+esc(L.join('\\n'))+'</div>';
     } else {
       logsHtml = '<div class="meta">Nessun log recente.</div>';
     }
@@ -291,7 +284,7 @@ def ui2_js():
       + '<div class="card"><h3>Token</h3>'+toksHtml+'</div>'
       + '<div class="card"><h3>Ultimi log</h3>'+logsHtml+'</div>';
 
-    var refresh = $('#refresh'); if(refresh){ refresh.onclick=function(){ select(c.id); }; }
+    var refresh=$('#refresh'); if(refresh){ refresh.onclick=function(){ select(c.id); }; }
 
     // BOT handlers — PATCH /admin/accounts {ig_user_id, bot_enabled}
     var btnOn=$('#btnBotOn'), btnOff=$('#btnBotOff'), bots=$('#bots'), botchip=$('#botchip');
@@ -310,7 +303,7 @@ def ui2_js():
         bots.textContent='Errore';
       });
     }
-    if(btnOn && btnOff && acc){ btnOn.onclick=function(){ setBot(true); }; btnOff.onclick=function(){ setBot(false); }; }
+    if(btnOn && btnOff && acc){ btnOn.onclick = function(){ setBot(true); }; btnOff.onclick = function(){ setBot(false); }; }
 
     // Prompts handlers (campo unico "system")
     var savep=$('#savep'), ps=$('#ps');
@@ -330,17 +323,15 @@ def ui2_js():
   }
 
   function showFatal(msg){
-    var app = document.getElementById('app');
-    app.innerHTML = '<div style="padding:20px;font-family:system-ui"><h2>⚠️ Errore UI</h2>'
+    var app=document.getElementById('app');
+    app.innerHTML='<div style="padding:20px;font-family:system-ui"><h2>⚠️ Errore UI</h2>'
       + '<pre style="white-space:pre-wrap;background:#111;color:#eee;padding:12px;border-radius:8px;border:1px solid #333;max-height:50vh;overflow:auto">'
       + esc(String(msg)) + '</pre></div>';
   }
 
   try { boot(); } catch (e) { showFatal(e); console.error(e); }
-})();
-
-        media_type="application/javascript"
-    )
+})();'''
+    return Response(JS, media_type="application/javascript")
 
 # -----------------------------------------------------------
 # Admin classico (ponte)
