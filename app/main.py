@@ -680,11 +680,11 @@ async def admin_tokens(
 # -----------------------------------------------------------
 # Prompts endpoints dedicati per /ui2
 # -----------------------------------------------------------
-class ClientPrompts(BaseModel):
-    greeting: str = ""
-    fallback: str = ""
-    handoff: str = ""
-    legal: str = ""
+# -----------------------------------------------------------
+# Prompts endpoints dedicati per /ui2 (singolo campo "system")
+# -----------------------------------------------------------
+class ClientPromptSystem(BaseModel):
+    system: str = ""
 
 @app.get("/ui2/prompts/{client_id}")
 async def ui2_get_prompts(client_id: int):
@@ -695,23 +695,18 @@ async def ui2_get_prompts(client_id: int):
           WHERE client_id = :cid
         """), {"cid": client_id})).mappings().all()
     data: Dict[str, str] = {r["key"]: r["value"] for r in rows}
-    return {
-        "greeting": data.get("greeting", ""),
-        "fallback": data.get("fallback", ""),
-        "handoff":  data.get("handoff", ""),
-        "legal":    data.get("legal", ""),
-    }
+    return {"system": data.get("system", "")}
 
 @app.put("/ui2/prompts/{client_id}")
-async def ui2_put_prompts(client_id: int, body: ClientPrompts):
+async def ui2_put_prompts(client_id: int, body: ClientPromptSystem):
     async with engine.begin() as conn:
-        for k, v in body.model_dump().items():
-            await conn.execute(text("""
-              INSERT INTO mfai_app.client_prompts (client_id, key, value)
-              VALUES (:cid, :k, :v)
-              ON CONFLICT (client_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
-            """), {"cid": client_id, "k": k, "v": v})
+        await conn.execute(text("""
+          INSERT INTO mfai_app.client_prompts (client_id, key, value)
+          VALUES (:cid, 'system', :v)
+          ON CONFLICT (client_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+        """), {"cid": client_id, "v": body.system})
     return {"status": "ok"}
+
 
 # -----------------------------------------------------------
 # OAuth callback (se serve)
