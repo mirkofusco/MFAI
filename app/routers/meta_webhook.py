@@ -71,6 +71,68 @@ def _clear_human(ig_user_id: str, user_id: str) -> None:
     _HUMAN_UNTIL.pop(_key(ig_user_id, user_id), None)
 
 # ------------------------------------------------------------------
+# DB HELPERS (client_id, system prompt, bot flag, tokens, logs)
+# ------------------------------------------------------------------
+async def _get_client_id_by_ig(ig_user_id: str) -> int | None:
+    q = text("SELECT client_id FROM mfai_app.instagram_accounts WHERE ig_user_id = :ig LIMIT 1")
+    async with engine.connect() as conn:
+        row = (await conn.execute(q, {"ig": ig_user_id})).first()
+    return int(row[0]) if row else None
+
+async def _get_system_prompt(client_id: int) -> str | None:
+    q = text("""
+      SELECT value FROM mfai_app.client_prompts
+      WHERE client_id = :cid AND key = 'system'
+      LIMIT 1
+    """)
+    async with engine.connect() as conn:
+        row = (await conn.execute(q, {"cid": client_id})).first()
+    return str(row[0]) if row else None
+
+async def _bot_is_enabled(ig_user_id: str) -> bool:
+    q = text("SELECT bot_enabled FROM mfai_app.instagram_accounts WHERE ig_user_id = :ig LIMIT 1")
+    async with engine.connect() as conn:
+        row = (await conn.execute(q, {"ig": ig_user_id})).first()
+    return bool(row[0]) if row else False
+
+async def _get_ig_account_id(ig_user_id: str) -> int | None:
+    q = text("SELECT id FROM mfai_app.instagram_accounts WHERE ig_user_id = :ig LIMIT 1")
+    async with engine.connect() as conn:
+        row = (await conn.execute(q, {"ig": ig_user_id})).first()
+    return int(row[0]) if row else None
+
+async def _get_active_page_token(ig_user_id: str) -> str | None:
+    q = text("""
+        SELECT t.access_token
+        FROM mfai_app.tokens t
+        JOIN mfai_app.instagram_accounts ia ON ia.id = t.ig_account_id
+        WHERE ia.ig_user_id = :ig AND t.active = TRUE
+        LIMIT 1
+    """)
+    async with engine.connect() as conn:
+        row = (await conn.execute(q, {"ig": ig_user_id})).first()
+    return row[0] if row else None
+
+async def _log_message(ig_account_id: int | None, direction: str, payload: Any):
+    q = text("""
+        INSERT INTO mfai_app.message_logs (ig_account_id, direction, payload)
+        VALUES (:ig_account_id, :direction, :payload)
+    """)
+    async with engine.begin() as conn:
+        await conn.execute(q, {
+            "ig_account_id": ig_account_id,
+            "direction": direction,
+            "payload": json.dumps(payload, ensure_ascii=False)
+        })
+
+def _needs_takeover(resp: Dict[str, Any]) -> bool:
+    try:
+        err = (resp or {}).get("error", {})
+        return err.get("code") == 100 and err.get("error_subcode") == 2534037
+    except Exception:
+        return False
+
+# ------------------------------------------------------------------
 # VERIFY
 # ------------------------------------------------------------------
 @router.get("/webhook/meta")
@@ -154,12 +216,30 @@ async def meta_webhook(request: Request):
                 logger.info("Human active: skip AI reply for %s", _key(ig_user_id, sender_id))
                 continue
 
+            # --- BOT OFF guard per account ---
+            if not await _bot_is_enabled(ig_user_id):
+                logger.info("Bot disabled for ig_user_id=%s, skip reply", ig_user_id)
+                try:
+                    await _log_message(ig_account_id, "out", {"skip": "bot disabled"})
+                except Exception:
+                    pass
+                continue
+
             # --- Conversational memory: aggiungi l'input utente alla sessione ---
             _sess_add(ig_user_id, sender_id, "user", text_msg)
 
+            # --- Carica prompt per-cliente (system) ---
+            system_override: str | None = None
+            try:
+                cid = await _get_client_id_by_ig(ig_user_id)
+                if cid:
+                    system_override = await _get_system_prompt(cid)
+            except Exception as e:
+                logger.warning("system prompt load failed: %s", e)
+
             # --- Reply (AI con storia conversazionale) ---
             try:
-                reply_text = await ai_reply_with_history(ig_user_id, sender_id)
+                reply_text = await ai_reply_with_history(ig_user_id, sender_id, system_override=system_override)
             except Exception as e:
                 logger.error("AI error: %s", e)
                 reply_text = _fallback_reply(text_msg)
@@ -221,11 +301,16 @@ def _system_prompt_for_thread(has_history: bool) -> str:
         base += " NON ripetere domande già fatte; usa le informazioni appena fornite dall’utente."
     return base
 
-async def ai_reply_with_history(ig_user_id: str, user_id: str) -> str:
-    """Costruisce il prompt includendo la history in-RAM per il thread."""
+async def ai_reply_with_history(ig_user_id: str, user_id: str, system_override: str | None = None) -> str:
+    """Costruisce i messaggi includendo history in-RAM e system override per cliente."""
     sess = _sess_get(ig_user_id, user_id)
     use_history = len(sess) > 1  # c'è già almeno 1 turno precedente
-    sys = _system_prompt_for_thread(use_history)
+
+    # Se esiste un system personalizzato, usalo; altrimenti usa quello base
+    sys = (system_override or _system_prompt_for_thread(use_history)).strip()
+    # Se abbiamo history e il system personalizzato NON lo menziona, rinforza il vincolo.
+    if use_history and system_override:
+        sys += "\nNon ripetere domande già fatte; usa le informazioni già emerse nel thread."
 
     # Costruisci i messaggi per OpenAI: system + history (max 10) + ultimo user già appeso in sess
     history = sess[-10:]
@@ -262,45 +347,8 @@ async def ai_reply_with_history(ig_user_id: str, user_id: str) -> str:
             return _fallback_reply(last_user)
 
 # ------------------------------------------------------------------
-# HELPERS
+# GRAPH HELPERS
 # ------------------------------------------------------------------
-async def _get_ig_account_id(ig_user_id: str) -> int | None:
-    q = text("SELECT id FROM mfai_app.instagram_accounts WHERE ig_user_id = :ig LIMIT 1")
-    async with engine.connect() as conn:
-        row = (await conn.execute(q, {"ig": ig_user_id})).first()
-    return int(row[0]) if row else None
-
-async def _get_active_page_token(ig_user_id: str) -> str | None:
-    q = text("""
-        SELECT t.access_token
-        FROM mfai_app.tokens t
-        JOIN mfai_app.instagram_accounts ia ON ia.id = t.ig_account_id
-        WHERE ia.ig_user_id = :ig AND t.active = TRUE
-        LIMIT 1
-    """)
-    async with engine.connect() as conn:
-        row = (await conn.execute(q, {"ig": ig_user_id})).first()
-    return row[0] if row else None
-
-async def _log_message(ig_account_id: int | None, direction: str, payload: Any):
-    q = text("""
-        INSERT INTO mfai_app.message_logs (ig_account_id, direction, payload)
-        VALUES (:ig_account_id, :direction, :payload)
-    """)
-    async with engine.begin() as conn:
-        await conn.execute(q, {
-            "ig_account_id": ig_account_id,
-            "direction": direction,
-            "payload": json.dumps(payload, ensure_ascii=False)
-        })
-
-def _needs_takeover(resp: Dict[str, Any]) -> bool:
-    try:
-        err = (resp or {}).get("error", {})
-        return err.get("code") == 100 and err.get("error_subcode") == 2534037
-    except Exception:
-        return False
-
 async def _take_thread_control(page_token: str, page_id: str, recipient_id: str) -> bool:
     url = f"https://graph.facebook.com/v20.0/{page_id}/take_thread_control"
     params = {"access_token": page_token}
