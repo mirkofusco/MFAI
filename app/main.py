@@ -290,25 +290,23 @@ if(prompts){
       btnOff.onclick = ()=> setBot(false);
     }
 
-    // Prompts handlers
-    const savep=$('#savep'), ps=$('#ps');
-    if(savep){
-      savep.onclick=async()=>{
-        try{
-          ps.textContent='…';
-          await fetch(api.prompts(c.id),{
-            method:'PUT',
-            credentials:'include',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({
-              greeting:$('#greet').value,
-              fallback:$('#fallback').value,
-              handoff:$('#handoff').value,
-              legal:$('#legal').value
-            })
-          });
-          ps.textContent='Salvato';
-        }catch(e){ ps.textContent='Errore'; }
+// Prompts handlers (campo unico "system")
+const savep=$('#savep'), ps=$('#ps');
+if(savep){
+  savep.onclick=async()=>{
+    try{
+      ps.textContent='…';
+      await fetch(api.prompts(c.id),{
+        method:'PUT',
+        credentials:'include',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ system: $('#system').value })
+      });
+      ps.textContent='Salvato';
+    }catch(e){ ps.textContent='Errore'; }
+  };
+}
+
       };
     }
     const retry=$('#retryPrompts'); if(retry){ retry.onclick=()=>select(c.id); }
