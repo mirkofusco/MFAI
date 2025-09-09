@@ -85,242 +85,260 @@ def ui2_js():
         r"""
 (function(){
   // API endpoints usati dalla UI
-  const api={
-    clients:'/admin/clients',
-    accounts:'/admin/accounts',          // GET elenco + PATCH toggle bot (definiti sotto)
-    tokens:'/admin/tokens',              // GET elenco token (definito sotto)
-    logs:'/admin/logs',                  // GET logs (definito sotto)
-    prompts:(cid)=>`/ui2/prompts/${cid}`,// GET/PUT prompts (definito sotto)
-    adminUI:'/admin/ui'
+  var api = {
+    clients: '/admin/clients',
+    accounts: '/admin/accounts',          // GET elenco + PATCH toggle bot
+    tokens: '/admin/tokens',              // GET elenco token
+    logs: '/admin/logs',                  // GET logs
+    prompts: function(cid){ return '/ui2/prompts/'+cid; }, // GET/PUT prompt unico "system"
+    adminUI: '/admin/ui'
   };
 
-  const state={clients:[],accounts:[],tokens:[],selected:null};
-  const $=(s,el=document)=>el.querySelector(s);
-  const esc=(s)=> (s??"").replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[m]));
-
-  async function j(u,o={}){const r=await fetch(u,{...o,credentials:'include'});if(!r.ok){const t=await r.text().catch(()=> "");throw new Error(`HTTP ${r.status} ${r.statusText} on ${u}\n${t}`);}return r.json();}
+  var state = {clients:[], accounts:[], tokens:[], selected:null};
+  function $(s, el){ return (el||document).querySelector(s); }
+  function esc(s){
+    s = (s==null?'':String(s));
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function repAll(str, find, repl){
+    return String(str).split(find).join(repl);
+  }
+  function j(u,o){
+    o = o||{};
+    o.credentials = 'include';
+    return fetch(u,o).then(function(r){
+      if(!r.ok) return r.text().then(function(t){ throw new Error('HTTP '+r.status+' '+r.statusText+' on '+u+'\n'+t); });
+      return r.json();
+    });
+  }
 
   // Shell
-  const root=document.getElementById('app');
-  root.innerHTML=`
-    <aside class="side">
-      <div class="brand">MF.AI — Clienti</div>
-      <div class="search"><input id="q" placeholder="Cerca cliente…"></div>
-      <div id="list" class="list"><div class="card empty">Carico clienti…</div></div>
-    </aside>
-    <main class="main">
-      <div class="bar">
-        <div style="display:flex;align-items:center;gap:8px">
-          <div id="crumb" class="crumb">Nessun cliente</div>
-          <span id="hint" class="hint"></span>
-        </div>
-        <div>
-          <a href="/admin/ui" target="_blank"><button title="Apri l'Admin classico in una nuova scheda">Admin classico</button></a>
-        </div>
-      </div>
-      <div id="detail" class="content">
-        <div class="card empty">Seleziona un cliente dalla lista.</div>
-      </div>
-    </main>
-  `;
+  var root = document.getElementById('app');
+  root.innerHTML =
+    '<aside class="side">'
+    + '<div class="brand">MF.AI — Clienti</div>'
+    + '<div class="search"><input id="q" placeholder="Cerca cliente…"></div>'
+    + '<div id="list" class="list"><div class="card empty">Carico clienti…</div></div>'
+    + '</aside>'
+    + '<main class="main">'
+    + '  <div class="bar">'
+    + '    <div style="display:flex;align-items:center;gap:8px">'
+    + '      <div id="crumb" class="crumb">Nessun cliente</div>'
+    + '      <span id="hint" class="hint"></span>'
+    + '    </div>'
+    + '    <div><a href="/admin/ui" target="_blank"><button title="Apri l\'Admin classico in una nuova scheda">Admin classico</button></a></div>'
+    + '  </div>'
+    + '  <div id="detail" class="content"><div class="card empty">Seleziona un cliente dalla lista.</div></div>'
+    + '</main>';
 
-  async function boot(){
-    try{
-      $('#hint').textContent='Carico…';
-      const [c,a,t]=await Promise.all([
-        j(api.clients),
-        j(api.accounts),
-        j(api.tokens).catch(()=>[])
-      ]);
+  function boot(){
+    $('#hint').textContent = 'Carico…';
+    Promise.all([
+      j(api.clients),
+      j(api.accounts),
+      j(api.tokens).catch(function(){ return []; })
+    ]).then(function(arr){
+      var c = arr[0], a = arr[1], t = arr[2];
       state.clients=c; state.accounts=a; state.tokens=t;
-      renderList(); $('#hint').textContent=`Clienti: ${c.length}`;
-      $('#q').addEventListener('input',e=>renderList(e.target.value));
-    }catch(err){ showFatal(err); console.error(err); }
+      renderList();
+      $('#hint').textContent = 'Clienti: '+c.length;
+      $('#q').addEventListener('input', function(e){ renderList(e.target.value); });
+    }).catch(function(err){
+      showFatal(err);
+      console.error(err);
+    });
   }
 
-  function renderList(f=''){
-    const box=$('#list'); box.innerHTML='';
-    const q=(f||'').trim().toLowerCase();
-    const items=state.clients.filter(c=>{const s=`${c.id||''} ${c.name||''} ${c.company||''}`.toLowerCase(); return !q||s.includes(q);});
-    for(const c of items){
-      const acc=state.accounts.find(a=>a.client_id===c.id);
-      const el=document.createElement('div'); el.className='item'+(state.selected===c.id?' active':'');
-      el.innerHTML=`<h4>${esc(c.name||c.company||('Cliente #'+c.id))}</h4><div class="meta">${acc?('@'+esc(acc.username)):'—'} · Bot ${acc?.bot_enabled?'ON':'OFF'}</div>`;
-      el.onclick=()=>select(c.id); box.appendChild(el);
-    }
-    if(items.length===0) box.innerHTML='<div class="card empty">Nessun risultato</div>';
+  function renderList(f){
+    f = f||'';
+    var box = $('#list'); box.innerHTML='';
+    var q = String(f).trim().toLowerCase();
+    var items = state.clients.filter(function(c){
+      var s = ((c.id||'')+' '+(c.name||'')+' '+(c.company||'')).toLowerCase();
+      return !q || s.indexOf(q) !== -1;
+    });
+    items.forEach(function(c){
+      var acc = state.accounts.find ? state.accounts.find(function(a){ return a.client_id===c.id; })
+                                    : (function(){ for(var i=0;i<state.accounts.length;i++){ if(state.accounts[i].client_id===c.id) return state.accounts[i]; } return null; })();
+      var el = document.createElement('div');
+      var username = acc ? '@'+esc(acc.username) : '—';
+      var botEnabled = acc && acc.bot_enabled ? 'ON' : 'OFF';
+      el.className = 'item' + (state.selected===c.id?' active':'');
+      el.innerHTML = '<h4>' + esc(c.name||c.company||('Cliente #'+c.id)) + '</h4>'
+                   + '<div class="meta">' + username + ' · Bot ' + botEnabled + '</div>';
+      el.onclick = function(){ select(c.id); };
+      box.appendChild(el);
+    });
+    if(items.length===0){ box.innerHTML = '<div class="card empty">Nessun risultato</div>'; }
   }
 
-  async function select(clientId){
-    try{
-      state.selected=clientId; renderList($('#q').value||'');
-      const c=state.clients.find(x=>x.id===clientId);
-      const acc=state.accounts.find(a=>a.client_id===clientId);
-      $('#crumb').textContent=c?.name||c?.company||('Cliente #'+clientId);
-      $('#hint').textContent='Carico scheda…';
+  function select(clientId){
+    state.selected = clientId; renderList($('#q').value||'');
+    var c = (function(){ for(var i=0;i<state.clients.length;i++){ if(state.clients[i].id===clientId) return state.clients[i]; } return null; })();
+    var acc = (function(){ for(var i=0;i<state.accounts.length;i++){ if(state.accounts[i].client_id===clientId) return state.accounts[i]; } return null; })();
+    $('#crumb').textContent = (c && (c.name||c.company)) ? (c.name||c.company) : ('Cliente #'+clientId);
+    $('#hint').textContent = 'Carico scheda…';
 
-      let prompts=null, promptsErr=null, logs=[];
-      try{ prompts=await j(api.prompts(clientId)); }catch(e){ promptsErr=String(e); }
-      try{ logs=await j(api.logs+`?client_id=${clientId}&limit=30`);}catch(_e){}
-
-      const toks=state.tokens.filter(t=>t.ig_account_id===acc?.id);
-      renderDetail({c,acc,toks,logs,prompts,promptsErr});
-      $('#hint').textContent='Pronto';
-    }catch(err){ showFatal(err); console.error(err); }
+    var prompts=null, promptsErr=null, logs=[];
+    j(api.prompts(clientId)).then(function(p){ prompts=p; })
+      .catch(function(e){ promptsErr=String(e); })
+      .then(function(){
+        return j(api.logs+'?client_id='+clientId+'&limit=30').then(function(l){ logs=l; }).catch(function(){});
+      })
+      .then(function(){
+        var toks = [];
+        if(acc){
+          for(var i=0;i<state.tokens.length;i++){ if(state.tokens[i].ig_account_id===acc.id) toks.push(state.tokens[i]); }
+        }
+        renderDetail({c:c, acc:acc, toks:toks, logs:logs, prompts:prompts, promptsErr:promptsErr});
+        $('#hint').textContent='Pronto';
+      })
+      .catch(function(err){ showFatal(err); console.error(err); });
   }
 
   function headerLine(name){
-    return `
-      <div class="headerline">
-        <div class="title">${esc(name||'Cliente')}</div>
-        <div class="group">
-          <button id="refresh">Ricarica scheda</button>
-          <a href="/admin/ui" target="_blank"><button>Admin classico</button></a>
-        </div>
-      </div>`;
+    return ''
+      + '<div class="headerline">'
+      + '  <div class="title">'+esc(name||'Cliente')+'</div>'
+      + '  <div class="group">'
+      + '    <button id="refresh">Ricarica scheda</button>'
+      + '    <a href="/admin/ui" target="_blank"><button>Admin classico</button></a>'
+      + '  </div>'
+      + '</div>';
   }
 
-  function renderDetail({c,acc,toks,logs,prompts,promptsErr}){
-    const d=document.getElementById('detail');
-    const statusChip = acc?.active ? `<span class="chip ok">Attivo</span>` : `<span class="chip bad">Disattivo</span>`;
-    const botChip = acc?.bot_enabled ? `<span id="botchip" class="chip ok">ON</span>` : `<span id="botchip" class="chip bad">OFF</span>`;
+  function renderDetail(ctx){
+    var c=ctx.c, acc=ctx.acc, toks=ctx.toks, logs=ctx.logs, prompts=ctx.prompts, promptsErr=ctx.promptsErr;
+    var d=document.getElementById('detail');
 
-    const botButtons = acc ? `
-      <div class="group" id="botButtons">
-        <button id="btnBotOn"  class="primary">Attiva bot</button>
-        <button id="btnBotOff" class="danger">Disattiva bot</button>
-        ${botChip}
-        <span id="bots" class="hint"></span>
-      </div>` : '<span class="hint">Nessun account IG collegato.</span>';
+    var statusChip = (acc && acc.active) ? '<span class="chip ok">Attivo</span>' : '<span class="chip bad">Disattivo</span>';
+    var botChip = (acc && acc.bot_enabled) ? '<span id="botchip" class="chip ok">ON</span>' : '<span id="botchip" class="chip bad">OFF</span>';
 
-    let promptsCard='';
-if(prompts){
-  promptsCard=`
-    <div class="card">
-      <h3>Prompt cliente (unico)</h3>
-      <div class="row">
-        <textarea id="system" rows="8" placeholder="Scrivi qui il prompt completo...">${(prompts?.system??'').replaceAll('<','&lt;').replaceAll('>','&gt;')}</textarea>
-      </div>
-      <div class="row" style="justify-content:flex-end">
-        <span id="ps" class="hint" style="margin-right:8px"></span>
-        <button id="savep" class="primary">Salva</button>
-      </div>
-    </div>`;
-} else {
-  const info = promptsErr ? promptsErr.split('\n')[0] : 'endpoint non raggiungibile';
-  promptsCard=`
-    <div class="card">
-      <h3>Prompt cliente (unico)</h3>
-      <div class="row">
-        <span class="chip neutral">Sezione disabilitata</span>
-        <span class="hint">/ui2/prompts/{client_id} non disponibile (${info}).</span>
-      </div>
-      <div class="row">
-        <button id="retryPrompts">Riprova</button>
-        <a href="/admin/ui" target="_blank"><button>Admin classico</button></a>
-      </div>
-    </div>`;
-}
+    var botButtons = acc
+      ? '<div class="group" id="botButtons">'
+          + '<button id="btnBotOn" class="primary">Attiva bot</button>'
+          + '<button id="btnBotOff" class="danger">Disattiva bot</button>'
+          + botChip
+          + '<span id="bots" class="hint"></span>'
+        + '</div>'
+      : '<span class="hint">Nessun account IG collegato.</span>';
 
-      promptsCard=`
-        <div class="card">
-          <h3>Prompt cliente</h3>
-          <div class="row">
-            <span class="chip neutral">Sezione disabilitata</span>
-            <span class="hint">/ui2/prompts/{client_id} non disponibile (${info}).</span>
-          </div>
-          <div class="row">
-            <button id="retryPrompts">Riprova</button>
-            <a href="/admin/ui" target="_blank"><button>Admin classico</button></a>
-          </div>
-        </div>`;
+    var promptsCard = '';
+    if(prompts){
+      var val = prompts.system || '';
+      val = repAll(repAll(val,'<','&lt;'),'>','&gt;');
+      promptsCard =
+        '<div class="card">'
+        + '<h3>Prompt cliente (unico)</h3>'
+        + '<div class="row"><textarea id="system" rows="8" placeholder="Scrivi qui il prompt completo...">'+val+'</textarea></div>'
+        + '<div class="row" style="justify-content:flex-end">'
+        +   '<span id="ps" class="hint" style="margin-right:8px"></span>'
+        +   '<button id="savep" class="primary">Salva</button>'
+        + '</div>'
+        + '</div>';
+    } else {
+      var info = promptsErr ? String(promptsErr).split('\n')[0] : 'endpoint non raggiungibile';
+      promptsCard =
+        '<div class="card">'
+        + '<h3>Prompt cliente (unico)</h3>'
+        + '<div class="row"><span class="chip neutral">Sezione disabilitata</span>'
+        + '<span class="hint">/ui2/prompts/{client_id} non disponibile ('+esc(info)+').</span></div>'
+        + '<div class="row"><button id="retryPrompts">Riprova</button>'
+        + '<a href="/admin/ui" target="_blank"><button>Admin classico</button></a></div>'
+        + '</div>';
     }
 
-    d.innerHTML=`
-      <div class="card">
-        ${headerLine(c?.name||c?.company||('Cliente #'+c.id))}
-        <div class="row">
-          <div class="kv"><b>Client ID</b> ${String(c.id)}</div>
-          <div class="kv"><b>IG</b> ${acc?('@'+acc.username):'—'}</div>
-          <div class="kv"><b>IG_USER_ID</b> ${acc?.ig_user_id||'—'}</div>
-          <div class="kv"><b>Stato</b> ${statusChip}</div>
-        </div>
-        <div class="row">
-          ${botButtons}
-        </div>
-      </div>
+    var toksHtml = '';
+    if(toks && toks.length){
+      var lines = [];
+      for(var i=0;i<toks.length;i++){
+        var t=toks[i];
+        var when = t.expires_at ? new Date(t.expires_at).toLocaleString() : '—';
+        lines.push('• ' + (t.long_lived?'LLT':'SLT') + ' | scade: ' + when + ' | active=' + t.active);
+      }
+      toksHtml = '<div class="log">'+esc(lines.join('\n'))+'</div>';
+    } else {
+      toksHtml = '<div class="meta">Nessun token per questo account.</div>';
+    }
 
-      ${promptsCard}
+    var logsHtml = '';
+    if(logs && logs.length){
+      var L = [];
+      for(var i=0;i<logs.length;i++){
+        var x=logs[i];
+        var ts = new Date(x.ts || x.created_at).toLocaleString();
+        var dir = x.direction || '';
+        var payload = x.payload ? JSON.stringify(x.payload) : '';
+        L.push('['+ts+'] '+dir+' '+payload);
+      }
+      logsHtml = '<div class="log">'+esc(L.join('\n'))+'</div>';
+    } else {
+      logsHtml = '<div class="meta">Nessun log recente.</div>';
+    }
 
-      <div class="card">
-        <h3>Token</h3>
-        ${toks.length?`<div class="log">${toks.map(t=>`• ${t.long_lived?'LLT':'SLT'} | scade: ${new Date(t.expires_at).toLocaleString()} | active=${t.active}`).join('\n')}</div>`:'<div class="meta">Nessun token per questo account.</div>'}
-      </div>
+    d.innerHTML =
+      '<div class="card">'
+      +   headerLine((c && (c.name||c.company)) ? (c.name||c.company) : ('Cliente #'+c.id))
+      +   '<div class="row">'
+      +     '<div class="kv"><b>Client ID</b> '+String(c.id)+'</div>'
+      +     '<div class="kv"><b>IG</b> '+(acc?('@'+esc(acc.username)):'—')+'</div>'
+      +     '<div class="kv"><b>IG_USER_ID</b> '+(acc?esc(acc.ig_user_id):'—')+'</div>'
+      +     '<div class="kv"><b>Stato</b> '+statusChip+'</div>'
+      +   '</div>'
+      +   '<div class="row">'+botButtons+'</div>'
+      + '</div>'
+      + promptsCard
+      + '<div class="card"><h3>Token</h3>'+toksHtml+'</div>'
+      + '<div class="card"><h3>Ultimi log</h3>'+logsHtml+'</div>';
 
-      <div class="card">
-        <h3>Ultimi log</h3>
-        ${logs?.length?`<div class="log">${logs.map(x=>`[${new Date(x.ts||x.created_at).toLocaleString()}] ${x.direction||''} ${x.payload?JSON.stringify(x.payload):''}`).join('\n')}</div>`:'<div class="meta">Nessun log recente.</div>'}
-      </div>
-    `;
-
-    const refresh=$('#refresh'); if(refresh){ refresh.onclick=()=>select(c.id); }
+    var refresh = $('#refresh'); if(refresh){ refresh.onclick=function(){ select(c.id); }; }
 
     // BOT handlers — PATCH /admin/accounts {ig_user_id, bot_enabled}
-    const btnOn=$('#btnBotOn'), btnOff=$('#btnBotOff'), bots=$('#bots'), botchip=$('#botchip');
-    async function setBot(enabled){
-      try{
-        bots.textContent='…';
-        await j(api.accounts,{
-          method:'PATCH',
-          headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({ ig_user_id: acc.ig_user_id, bot_enabled: enabled })
-        });
+    var btnOn=$('#btnBotOn'), btnOff=$('#btnBotOff'), bots=$('#bots'), botchip=$('#botchip');
+    function setBot(enabled){
+      bots.textContent='…';
+      j(api.accounts,{
+        method:'PATCH',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ ig_user_id: acc.ig_user_id, bot_enabled: enabled })
+      }).then(function(){
         botchip.textContent = enabled ? 'ON' : 'OFF';
         botchip.className = 'chip ' + (enabled ? 'ok' : 'bad');
         bots.textContent='Salvato';
-        const idx = state.accounts.findIndex(a=>a.id===acc.id);
-        if(idx>-1){ state.accounts[idx].bot_enabled = enabled; }
-      }catch(e){
+        for(var i=0;i<state.accounts.length;i++){ if(state.accounts[i].id===acc.id){ state.accounts[i].bot_enabled = enabled; break; } }
+      }).catch(function(){
         bots.textContent='Errore';
-        console.error(e);
-      }
-    }
-    if(btnOn && btnOff && acc){
-      btnOn.onclick = ()=> setBot(true);
-      btnOff.onclick = ()=> setBot(false);
-    }
-
-// Prompts handlers (campo unico "system")
-const savep=$('#savep'), ps=$('#ps');
-if(savep){
-  savep.onclick=async()=>{
-    try{
-      ps.textContent='…';
-      await fetch(api.prompts(c.id),{
-        method:'PUT',
-        credentials:'include',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({ system: $('#system').value })
       });
-      ps.textContent='Salvato';
-    }catch(e){ ps.textContent='Errore'; }
-  };
-}
+    }
+    if(btnOn && btnOff && acc){ btnOn.onclick=function(){ setBot(true); }; btnOff.onclick=function(){ setBot(false); }; }
 
+    // Prompts handlers (campo unico "system")
+    var savep=$('#savep'), ps=$('#ps');
+    if(savep){
+      savep.onclick=function(){
+        ps.textContent='…';
+        fetch(api.prompts(c.id),{
+          method:'PUT',
+          credentials:'include',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({ system: $('#system').value })
+        }).then(function(){ ps.textContent='Salvato'; })
+          .catch(function(){ ps.textContent='Errore'; });
       };
     }
-    const retry=$('#retryPrompts'); if(retry){ retry.onclick=()=>select(c.id); }
+    var retry=$('#retryPrompts'); if(retry){ retry.onclick=function(){ select(c.id); }; }
   }
 
   function showFatal(msg){
-    const app=document.getElementById('app');
-    app.innerHTML=`<div style="padding:20px;font-family:system-ui"><h2>⚠️ Errore UI</h2>
-    <pre style="white-space:pre-wrap;background:#111;color:#eee;padding:12px;border-radius:8px;border:1px solid #333;max-height:50vh;overflow:auto">${String(msg)}</pre></div>`;
+    var app = document.getElementById('app');
+    app.innerHTML = '<div style="padding:20px;font-family:system-ui"><h2>⚠️ Errore UI</h2>'
+      + '<pre style="white-space:pre-wrap;background:#111;color:#eee;padding:12px;border-radius:8px;border:1px solid #333;max-height:50vh;overflow:auto">'
+      + esc(String(msg)) + '</pre></div>';
   }
 
   try { boot(); } catch (e) { showFatal(e); console.error(e); }
 })();
-""",
+
         media_type="application/javascript"
     )
 
