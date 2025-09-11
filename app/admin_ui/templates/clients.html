@@ -34,7 +34,7 @@
 
 <section class="card">
   <h2>Nuovo cliente</h2>
-  <form id="create" method="post" action="/ui/clients/create">
+  <form id="create" method="post" action="/ui2/clients/create">
     <div class="grid">
       <div>
         <label>Nome</label>
@@ -92,7 +92,7 @@
             </td>
             <td>{{ c.ai_prompt or '—' }}</td>
             <td>
-              <form method="post" action="/ui/clients/delete" onsubmit="return confirm('Eliminare il cliente #{{ c.id }}?');">
+              <form method="post" action="/ui2/clients/delete" onsubmit="return confirm('Eliminare il cliente #{{ c.id }}?');">
                 <input type="hidden" name="client_id" value="{{ c.id }}">
                 <button type="submit" class="danger">Elimina</button>
               </form>
