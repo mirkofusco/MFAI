@@ -22,7 +22,7 @@ except Exception:
     except Exception:
         engine = None  # verrà gestito dove serve
 
-router = APIRouter(prefix="/ui", tags=["Admin UI"])
+router = APIRouter(prefix="/ui2", tags=["Admin UI"])
 templates = Jinja2Templates(directory="app/admin_ui/templates")
 security = HTTPBasic()
 
