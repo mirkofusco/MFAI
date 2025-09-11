@@ -22,10 +22,145 @@
 
   <main>
     <article>
-      <div id="list">Caricamento…</div>
+      <!-- Toolbar Crea/Ricarica -->
+      <div style="display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; margin-bottom:.75rem;">
+        <input id="nameInput"  type="text"  placeholder="Nome cliente"/>
+        <input id="emailInput" type="email" placeholder="Email (opzionale)"/>
+        <button id="createBtn">Crea cliente</button>
+        <button id="reloadBtn" class="secondary">Ricarica</button>
+        <span id="message" class="muted"></span>
+      </div>
+
+      <!-- Tabella elenco -->
+      <div style="overflow-x:auto;">
+        <table role="grid">
+          <thead>
+            <tr>
+              <th style="width:70px;">ID</th>
+              <th>Cliente</th>
+              <th style="width:220px;">Creato</th>
+              <th style="width:1%;"></th>
+            </tr>
+          </thead>
+          <tbody id="clientsBody">
+            <tr><td class="muted" colspan="4">Caricamento…</td></tr>
+          </tbody>
+        </table>
+      </div>
     </article>
   </main>
 
-  <script src="/static/clients.js"></script>
+  <script>
+  const tbody     = document.getElementById("clientsBody");
+  const msg       = document.getElementById("message");
+  const nameInput = document.getElementById("nameInput");
+  const emailInput= document.getElementById("emailInput");
+
+  function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+  function fmtDate(iso){ try{ return new Date(iso).toLocaleString(); }catch{ return iso||""; } }
+  function setMsg(text, isError=false){ if(!msg) return; msg.textContent=text||""; msg.style.color=isError?"#b00020":"inherit"; if(text) setTimeout(()=>msg.textContent="", 2500); }
+  async function safeJson(res){ try{ return await res.json(); } catch{ return null; } }
+
+  // GET elenco (presuppone esista /admin/clients)
+  async function loadClients(){
+    if (tbody) tbody.innerHTML = `<tr><td class="muted" colspan="4">Caricamento…</td></tr>`;
+    try{
+      const res = await fetch(`/admin/clients?limit=200`, { credentials:"include" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (!Array.isArray(data) || data.length === 0){
+        tbody.innerHTML = `<tr><td class="muted" colspan="4">Nessun cliente presente.</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = data.map(c => `
+        <tr>
+          <td>${c.id}</td>
+          <td>
+            <a href="/ui/client/${c.id}"><strong>${esc(c.name||"")}</strong></a>
+            <div class="muted">${esc(c.email||"")}</div>
+          </td>
+          <td>${fmtDate(c.created_at)}</td>
+          <td style="white-space:nowrap;">
+            <a href="/ui/client/${c.id}" role="button" class="secondary">Apri</a>
+            <button class="contrast outline" data-del="${c.id}">Elimina</button>
+          </td>
+        </tr>
+      `).join("");
+
+      // bind elimina
+      tbody.querySelectorAll("button[data-del]").forEach(btn=>{
+        btn.addEventListener("click", async ()=>{
+          const id = btn.getAttribute("data-del");
+          if (!confirm(`Eliminare definitivamente il cliente #${id}?`)) return;
+          await deleteClient(id);
+        });
+      });
+    }catch(e){
+      console.error(e);
+      if (tbody) tbody.innerHTML = `<tr><td colspan="4"><mark>${esc(e.message)}</mark></td></tr>`;
+      setMsg("Errore caricando i clienti", true);
+    }
+  }
+
+  // POST crea — tenta /admin/client, se 404/405 prova /admin/clients
+  async function createClient(){
+    const name  = (nameInput?.value||"").trim();
+    const email = (emailInput?.value||"").trim();
+    if (!name){ setMsg("Inserisci il nome", true); nameInput?.focus(); return; }
+
+    async function tryPost(url){
+      const res = await fetch(url, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, email })
+      });
+      return res;
+    }
+
+    try{
+      let res = await tryPost('/admin/client');
+      if (res.status === 404 || res.status === 405) res = await tryPost('/admin/clients');
+      if (!res.ok){
+        const err = await safeJson(res);
+        throw new Error(err?.detail || `HTTP ${res.status}`);
+      }
+      nameInput.value = ""; if (emailInput) emailInput.value = "";
+      setMsg("Cliente creato");
+      await loadClients();
+    }catch(e){
+      console.error(e);
+      setMsg("Errore creazione: " + e.message, true);
+    }
+  }
+
+  // DELETE elimina — tenta /admin/client/{id}, se 404/405 prova /admin/clients/{id}
+  async function deleteClient(id){
+    async function tryDelete(url){
+      const res = await fetch(url, { method:"DELETE", credentials:"include" });
+      return res;
+    }
+    try{
+      let res = await tryDelete(`/admin/client/${id}`);
+      if (res.status === 404 || res.status === 405) res = await tryDelete(`/admin/clients/${id}`);
+      if (!res.ok){
+        const err = await safeJson(res);
+        throw new Error(err?.detail || `HTTP ${res.status}`);
+      }
+      setMsg(`Cliente #${id} eliminato`);
+      await loadClients();
+    }catch(e){
+      console.error(e);
+      setMsg("Errore eliminazione: " + e.message, true);
+    }
+  }
+
+  // Hook bottoni
+  document.getElementById("createBtn")?.addEventListener("click", createClient);
+  document.getElementById("reloadBtn")?.addEventListener("click", loadClients);
+
+  // Avvio
+  loadClients();
+  </script>
 </body>
 </html>
