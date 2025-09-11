@@ -1,109 +1,125 @@
 {% extends "base.html" %}
-{% block content %}
-<div class="d-flex align-items-center justify-content-between mb-3">
-  <h1 class="h4 m-0">Clients</h1>
-  <span class="text-muted small">{{ items|length }} risultati</span>
-</div>
+{% block title %}{{ page_title }}{% endblock %}
 
-<div class="table-responsive shadow-sm">
-  <table class="table table-sm table-hover align-middle mb-0 bg-white">
-    <thead class="table-light">
+{% block content %}
+<h1>Clienti</h1>
+
+{% if ok == 'created' %}
+  <div class="alert success">Cliente creato correttamente.</div>
+{% elif ok == 'deleted' %}
+  <div class="alert success">Cliente eliminato correttamente.</div>
+{% elif ok == 'account_updated' %}
+  <div class="alert success">Account aggiornato.</div>
+{% elif ok == 'token_refreshed' %}
+  <div class="alert success">Token aggiornato.</div>
+{% endif %}
+
+{% if err == 'invalid_input' %}
+  <div class="alert error">Compila i campi obbligatori (API Key minimo 8 caratteri).</div>
+{% elif err == 'duplicate_username' %}
+  <div class="alert error">Instagram username già presente.</div>
+{% elif err == 'not_found' %}
+  <div class="alert error">Cliente non trovato.</div>
+{% elif err == 'account_not_found' %}
+  <div class="alert error">Account non trovato.</div>
+{% elif err == 'missing_token' %}
+  <div class="alert error">Token mancante o troppo corto.</div>
+{% elif err == 'api_key_invalid' %}
+  <div class="alert error">API key non valida lato server.</div>
+{% elif err == 'token_refresh_failed' %}
+  <div class="alert error">Aggiornamento token fallito.</div>
+{% elif err %}
+  <div class="alert error">Errore: {{ err }}</div>
+{% endif %}
+
+<section class="card">
+  <h2>Nuovo cliente</h2>
+  <form id="create" method="post" action="/ui/clients/create">
+    <div class="grid">
+      <div>
+        <label>Nome</label>
+        <input type="text" name="name" placeholder="Azienda Srl" required>
+      </div>
+      <div>
+        <label>Instagram Username</label>
+        <input type="text" name="instagram_username" placeholder="azienda.ig" required>
+      </div>
+      <div>
+        <label>API Key</label>
+        <input type="text" name="api_key" placeholder="min 8 caratteri" required>
+      </div>
+      <div class="checkbox">
+        <label>Attivo</label>
+        <input type="checkbox" name="active" checked>
+      </div>
+    </div>
+    <div>
+      <label>AI Prompt (opzionale)</label>
+      <input type="text" name="ai_prompt" placeholder="Istruzioni per il bot del cliente">
+    </div>
+    <div>
+      <button type="submit">Aggiungi</button>
+    </div>
+  </form>
+</section>
+
+<section class="card" style="margin-top:24px;">
+  <h2>Elenco clienti</h2>
+  <table class="table">
+    <thead>
       <tr>
-        <th scope="col">Client ID</th>
-        <th scope="col">Name</th>
-        <th scope="col">Email</th>
-        <th scope="col">IG Account ID</th>
-        <th scope="col">IG User ID</th>
-        <th scope="col">Username</th>
-        <th scope="col">Active</th>
-        <th scope="col">Token Exp.</th>
-        <th scope="col" class="text-end">Azioni</th>
+        <th style="width:64px;">ID</th>
+        <th>Nome</th>
+        <th>Instagram</th>
+        <th style="width:120px;">Stato</th>
+        <th>Prompt</th>
+        <th style="width:140px;">Azioni</th>
       </tr>
     </thead>
     <tbody>
       {% if items and items|length > 0 %}
-        {% for it in items %}
-        <tr>
-          <td>{{ it.client_id }}</td>
-          <td>{{ it.name }}</td>
-          <td>{{ it.email }}</td>
-          <td>{{ it.ig_account_id or '—' }}</td>
-          <td>{{ it.ig_user_id or '—' }}</td>
-          <td>{{ it.username or '—' }}</td>
-          <td>
-            {% if it.active is not none %}
-              <span class="badge {{ 'bg-success' if it.active else 'bg-secondary' }}">
-                {{ 'ON' if it.active else 'OFF' }}
-              </span>
-            {% else %}
-              —
-            {% endif %}
-          </td>
-          <td>
-            {% if it.token_exp_human %}
-              {{ it.token_exp_human }}
-              {% if it.days_left is not none %}
-                <small class="text-muted">
-                  ({{ 'tra ' ~ it.days_left ~ 'g' if it.days_left >= 0 else (it.days_left|abs) ~ 'g fa' }})
-                </small>
+        {% for c in items %}
+          <tr>
+            <td>{{ c.id }}</td>
+            <td>{{ c.name }}</td>
+            <td>@{{ c.instagram_username }}</td>
+            <td>
+              {% if c.active %}
+                <span class="badge on">attivo</span>
+              {% else %}
+                <span class="badge off">spento</span>
               {% endif %}
-            {% else %}
-              —
-            {% endif %}
-          </td>
-          <td class="text-end">
-            <div class="d-flex gap-2 justify-content-end">
-              <!-- Toggle Active -->
-              <form method="post" action="/ui/accounts/toggle-active" class="m-0">
-                <input type="hidden" name="ig_account_id" value="{{ it.ig_account_id or '' }}">
-                <input type="hidden" name="new_active" value="{{ 0 if it.active else 1 }}">
-                <button
-                  class="btn btn-sm {{ 'btn-outline-secondary' if it.active else 'btn-success' }}"
-                  title="{{ 'Disattiva account' if it.active else 'Attiva account' }}"
-                  {% if not it.ig_account_id %}disabled{% endif %}>
-                  {{ 'Disattiva' if it.active else 'Attiva' }}
-                </button>
+            </td>
+            <td>{{ c.ai_prompt or '—' }}</td>
+            <td>
+              <form method="post" action="/ui/clients/delete" onsubmit="return confirm('Eliminare il cliente #{{ c.id }}?');">
+                <input type="hidden" name="client_id" value="{{ c.id }}">
+                <button type="submit" class="danger">Elimina</button>
               </form>
-
-              <!-- Refresh Token -->
-              <form method="post" action="/ui/tokens/refresh" class="m-0 d-flex gap-1" novalidate>
-                <input type="hidden" name="ig_user_id" value="{{ it.ig_user_id or '' }}">
-                <input
-                  type="text"
-                  name="token"
-                  placeholder="Nuovo token"
-                  class="form-control form-control-sm"
-                  style="width: 12rem"
-                  required
-                  minlength="5"
-                  autocomplete="off"
-                  spellcheck="false"
-                  {% if not it.ig_user_id %}disabled{% endif %}>
-                <input
-                  type="number"
-                  name="expires_in_days"
-                  value="60"
-                  min="1"
-                  max="365"
-                  class="form-control form-control-sm"
-                  style="width: 5.5rem"
-                  title="Giorni di validità"
-                  {% if not it.ig_user_id %}disabled{% endif %}>
-                <button
-                  class="btn btn-sm btn-primary"
-                  title="Ruota token e imposta la nuova scadenza"
-                  {% if not it.ig_user_id %}disabled{% endif %}>
-                  Refresh
-                </button>
-              </form>
-            </div>
-          </td>
-        </tr>
+            </td>
+          </tr>
         {% endfor %}
       {% else %}
-        <tr><td colspan="9" class="text-center text-muted py-4">Nessun dato</td></tr>
+        <tr><td colspan="6"><span class="muted">Nessun cliente presente.</span></td></tr>
       {% endif %}
     </tbody>
   </table>
-</div>
+</section>
+
+<style>
+  .alert{padding:10px 12px;border-radius:8px;margin:8px 0;}
+  .success{background:#e8f5e9;}
+  .error{background:#ffebee;}
+  .card{background:#fff;border:1px solid #eee;border-radius:12px;padding:16px;}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
+  .checkbox{display:flex;flex-direction:column;gap:6px;}
+  .table{width:100%;border-collapse:collapse;}
+  .table th,.table td{border-bottom:1px solid #eee;padding:10px;text-align:left;vertical-align:top;}
+  .badge{padding:2px 8px;border-radius:12px;font-size:12px;}
+  .on{background:#e8f5e9;}
+  .off{background:#fff3e0;}
+  .muted{color:#777;font-size:12px;}
+  button{padding:8px 12px;border-radius:8px;border:1px solid #ddd;background:#fafafa;cursor:pointer}
+  button.danger{background:#fdecea;border-color:#f5c6cb}
+</style>
 {% endblock %}
