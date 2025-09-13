@@ -142,6 +142,8 @@ async def ui_create_client(
     return RedirectResponse(url="/ui2/clients?ok=created", status_code=303)
 
 # ------------------------
+# ------------------------
+# ------------------------
 # Clients: DELETE (POST form) — DELETE diretto
 # ------------------------
 @router.post("/clients/delete")
@@ -153,16 +155,16 @@ async def ui_delete_client(
         raise HTTPException(status_code=500, detail="Engine DB non disponibile (import fallito)")
 
     async with engine.begin() as conn:
-        # Se hai FK verso altre tabelle senza ON DELETE CASCADE,
-        # elimina prima i figli (decommenta se serve):
+        # Se hai FK senza ON DELETE CASCADE, elimina prima i figli (decommenta se serve):
         # await conn.execute(text("DELETE FROM instagram_accounts WHERE client_id=:id"), {"id": client_id})
         # await conn.execute(text("DELETE FROM tokens WHERE client_id=:id"), {"id": client_id})
 
-        res = await conn.execute(text("DELETE FROM clients WHERE id = :id"), {"id": client_id})
-        if getattr(res, "rowcount", 0) == 0:
-            return RedirectResponse(url="/ui2/clients?err=not_found", status_code=303)
+        # DELETE cliente
+        await conn.execute(text("DELETE FROM clients WHERE id = :id"), {"id": client_id})
 
     return RedirectResponse(url="/ui2/clients?ok=deleted", status_code=303)
+
+
 
 # ------------------------
 # Accounts: toggle active (DB diretto)
