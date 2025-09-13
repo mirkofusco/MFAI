@@ -1,15 +1,126 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="card shadow-sm">
+
+<!-- Alert risultato azioni -->
+{% if ok == 'created' %}
+  <div class="alert alert-success">Cliente creato correttamente.</div>
+{% elif ok == 'deleted' %}
+  <div class="alert alert-success">Cliente eliminato correttamente.</div>
+{% elif ok == 'account_updated' %}
+  <div class="alert alert-success">Account aggiornato.</div>
+{% elif ok == 'token_refreshed' %}
+  <div class="alert alert-success">Token aggiornato.</div>
+{% elif err == 'invalid_input' %}
+  <div class="alert alert-danger">Dati non validi: compila Nome, Username IG e API Key (min 8 caratteri).</div>
+{% elif err == 'duplicate_username' %}
+  <div class="alert alert-danger">Username Instagram già presente.</div>
+{% elif err == 'db_unavailable' %}
+  <div class="alert alert-danger">Database non disponibile.</div>
+{% elif err == 'api_key_invalid' %}
+  <div class="alert alert-danger">API key non valida.</div>
+{% elif err == 'token_refresh_failed' %}
+  <div class="alert alert-danger">Aggiornamento token fallito.</div>
+{% endif %}
+
+<!-- Header dashboard -->
+<div class="card shadow-sm mb-3">
   <div class="card-body">
-    <h1 class="h4 mb-2">Benvenuto nella Admin UI di MF.AI</h1>
-    <p class="text-muted mb-0">Mirko Fusco</p>
-    <hr>
-    <a href="/ui/ping">/ui/ping</a>
+    <h1 class="h4 mb-1">MF.AI — Admin UI</h1>
+    <p class="text-muted mb-0">Dashboard</p>
   </div>
 </div>
+
+<!-- Link rapidi -->
+<div class="mb-3">
+  <a class="btn btn-outline-secondary btn-sm" href="/ui2/ping">Verifica UI2</a>
+  <a class="btn btn-outline-secondary btn-sm" href="/admin/prompts-ui">Gestisci Prompts</a>
+</div>
+
+<!-- Aggiungi cliente -->
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+    <h2 class="h5 mb-3">Aggiungi cliente</h2>
+    <form action="/ui2/clients/create" method="post" class="row g-3">
+      <div class="col-md-4">
+        <label class="form-label">Nome *</label>
+        <input type="text" name="name" class="form-control" required>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Instagram username *</label>
+        <input type="text" name="instagram_username" class="form-control" placeholder="@cliente" required>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">API key *</label>
+        <input type="text" name="api_key" class="form-control" minlength="8" required>
+      </div>
+      <div class="col-12">
+        <label class="form-label">AI Prompt (opzionale)</label>
+        <textarea name="ai_prompt" class="form-control" rows="3" placeholder="Prompt personalizzato..."></textarea>
+      </div>
+      <div class="col-md-2 d-flex align-items-end">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="active" id="active">
+          <label class="form-check-label" for="active">Attivo</label>
+        </div>
+      </div>
+      <div class="col-12">
+        <button type="submit" class="btn btn-primary">Crea</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Elenco clienti -->
+<div class="card shadow-sm">
+  <div class="card-body">
+    <h2 class="h5 mb-3">Clienti</h2>
+
+    {% if items and items|length > 0 %}
+      <div class="table-responsive">
+        <table class="table align-middle">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Nome</th>
+              <th>Instagram</th>
+              <th>Attivo</th>
+              <th>AI Prompt</th>
+              <th class="text-end">Azioni</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in items %}
+            <tr>
+              <td>#{{ item.id }}</td>
+              <td>{{ item.name }}</td>
+              <td>{{ item.instagram_username }}</td>
+              <td>
+                {% if item.active %}
+                  <span class="badge bg-success">ON</span>
+                {% else %}
+                  <span class="badge bg-secondary">OFF</span>
+                {% endif %}
+              </td>
+              <td class="text-truncate" style="max-width: 320px;">
+                {{ item.ai_prompt or '-' }}
+              </td>
+              <td class="text-end">
+                <!-- In futuro: pulsante "Apri scheda" -->
+                <form action="/ui2/clients/delete" method="post" class="d-inline"
+                      onsubmit="return confirm('Eliminare il cliente {{ item.name }} (ID {{ item.id }})?');">
+                  <input type="hidden" name="client_id" value="{{ item.id }}">
+                  <button type="submit" class="btn btn-outline-danger btn-sm">Elimina</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="text-muted mb-0">Nessun cliente presente.</p>
+    {% endif %}
+  </div>
+</div>
+
 {% endblock %}
-
-<p><a href="/admin/prompts-ui">🧩 Gestisci Prompts</a></p>
-
-<p><a href="/ui/clients">📋 Elenco Clienti</a></p>
