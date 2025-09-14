@@ -829,3 +829,32 @@ async def refresh_token(data: RefreshTokenPayload):
           VALUES (:ig, :token, :exp, TRUE, TRUE)
         """), {"ig": ig_account_id, "token": data.token, "exp": exp})
     return {"status": "ok", "ig_user_id": data.ig_user_id, "expires_at": exp.isoformat()}
+# --- MF.AI: mount routers (admin, prompts, webhook, admin UI classica) ---
+from app.routers.meta_webhook import router as meta_webhook_router
+from app.routers import admin_api, admin_prompts
+from app.admin_ui.routes import router as admin_ui_router
+
+# Monta i router (una sola volta)
+try:
+    app.include_router(meta_webhook_router)
+    app.include_router(admin_api.router)
+    app.include_router(admin_prompts.router)
+    app.include_router(admin_ui_router)
+except Exception:
+    # Se già montati in hot-reload, ignora
+    pass
+
+# Basic home/health (idempotenti)
+try:
+    @app.get("/")
+    def _home():
+        return {"ok": True, "app": "MF.AI"}
+except Exception:
+    pass
+
+try:
+    @app.get("/health")
+    def _health():
+        return {"ok": True}
+except Exception:
+    pass
