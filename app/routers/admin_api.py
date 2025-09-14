@@ -233,3 +233,43 @@ async def update_account_mapping(
 
     await db.commit()
     return dict(row)
+
+# --- POST /admin/accounts/reassign : sposta un IG su un altro client_id e opzionalmente attiva bot/account ---
+from fastapi import Body, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
+from app.security_admin import verify_admin
+from app.db_session import get_session
+
+@router.post("/accounts/reassign")
+async def reassign_account(
+    payload: dict = Body(...),
+    _: dict = Depends(verify_admin),
+    db: AsyncSession = Depends(get_session),
+):
+    ig_user_id = payload.get("ig_user_id")
+    client_id = payload.get("client_id")
+    if not ig_user_id or not client_id:
+        raise HTTPException(status_code=400, detail="ig_user_id e client_id sono obbligatori")
+
+    q = text("""
+        UPDATE mfai_app.instagram_accounts
+        SET client_id = :client_id,
+            active = COALESCE(:active, active),
+            bot_enabled = COALESCE(:bot_enabled, bot_enabled),
+            username = COALESCE(:username, username)
+        WHERE ig_user_id = :ig_user_id
+        RETURNING id, client_id, ig_user_id, username, active, bot_enabled, created_at
+    """)
+    res = await db.execute(q, {
+        "ig_user_id": ig_user_id,
+        "client_id": client_id,
+        "active": payload.get("active"),
+        "bot_enabled": payload.get("bot_enabled"),
+        "username": payload.get("username"),
+    })
+    row = res.mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Account IG non trovato")
+    await db.commit()
+    return dict(row)
