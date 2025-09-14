@@ -8,3 +8,13 @@ access_token.txt
 .venv*
 __pycache__/
 *.pyc
+# --- repo hygiene ---
+.DS_Store
+*.bak
+*.sqlite
+*.db
+structure.txt
+tracked_files.txt
+git_status.txt
+deps_freeze.txt
+env_info.txt
