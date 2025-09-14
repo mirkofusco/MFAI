@@ -156,3 +156,40 @@ async def create_account(
     await db.commit()
     return dict(row.mappings().one())
 
+
+# --- PATCH /admin/accounts/{ig_user_id} : aggiorna mapping IG (client_id/active/bot_enabled/username) ---
+from fastapi import Path
+from sqlalchemy.ext.asyncio import AsyncSession
+
+@router.patch("/accounts/{ig_user_id}")
+async def update_account_mapping(
+    ig_user_id: str = Path(..., description="Instagram User ID"),
+    payload: dict = Body(...),
+    _: dict = Depends(verify_admin),
+    db: AsyncSession = Depends(get_session),
+):
+    fields = []
+    params = {"ig_user_id": ig_user_id}
+
+    # campi ammessi
+    for k in ("client_id", "active", "bot_enabled", "username"):
+        if k in payload:
+            fields.append(f"{k} = :{k}")
+            params[k] = payload[k]
+
+    if not fields:
+        raise HTTPException(status_code=400, detail="Nessun campo valido da aggiornare")
+
+    q = text(f"""
+        UPDATE mfai_app.instagram_accounts
+        SET {", ".join(fields)}
+        WHERE ig_user_id = :ig_user_id
+        RETURNING id, client_id, ig_user_id, username, active, bot_enabled, created_at
+    """)
+    res = await db.execute(q, params)
+    row = res.mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Account IG non trovato")
+
+    await db.commit()
+    return dict(row)
