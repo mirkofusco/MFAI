@@ -1,19 +1,21 @@
-from fastapi import APIRouter, Depends, Query, Body
+# app/routers/admin_api.py
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Query, Body, Path, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
-from typing import Optional
 
 from app.security_admin import verify_admin
 from app.db_session import get_session
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
-# ---- Health
+# ---------------- Health ----------------
 @router.get("/health")
 async def admin_health(_: dict = Depends(verify_admin)):
     return {"status": "ok"}
 
-# ---- Clients
+# --------------- Clients ----------------
 @router.get("/clients")
 async def list_clients(
     _: dict = Depends(verify_admin),
@@ -31,20 +33,68 @@ async def list_clients(
 
 @router.post("/clients")
 async def create_client(
+    payload: dict = Body(...),
     _: dict = Depends(verify_admin),
     db: AsyncSession = Depends(get_session),
-    payload: dict = Body(...),
 ):
+    name = (payload.get("name") or "").strip()
+    email = (payload.get("email") or None)
+    if not name:
+        raise HTTPException(status_code=400, detail="Il campo 'name' è obbligatorio")
+
     q = text("""
         INSERT INTO mfai_app.clients (name, email)
         VALUES (:name, :email)
         RETURNING id, name, email, created_at
     """)
-    row = await db.execute(q, {"name": payload["name"], "email": payload.get("email")})
+    res = await db.execute(q, {"name": name, "email": email})
     await db.commit()
-    return dict(row.mappings().one())
+    return dict(res.mappings().one())
 
-# ---- Accounts (schema reale)
+async def _delete_client_tx(db: AsyncSession, client_id: int):
+    # esiste il client?
+    r = await db.execute(text("SELECT 1 FROM mfai_app.clients WHERE id=:id"), {"id": client_id})
+    if r.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    # elimina dipendenze (tokens -> instagram_accounts) poi client
+    await db.execute(text("""
+        DELETE FROM mfai_app.tokens
+        WHERE ig_account_id IN (
+          SELECT id FROM mfai_app.instagram_accounts WHERE client_id=:id
+        )
+    """), {"id": client_id})
+    await db.execute(text("DELETE FROM mfai_app.instagram_accounts WHERE client_id=:id"), {"id": client_id})
+    await db.execute(text("DELETE FROM mfai_app.clients WHERE id=:id"), {"id": client_id})
+
+@router.delete("/clients/{client_id}")
+async def delete_client_by_path(
+    client_id: int = Path(..., ge=1),
+    _: dict = Depends(verify_admin),
+    db: AsyncSession = Depends(get_session),
+):
+    async with db.begin():
+        await _delete_client_tx(db, client_id)
+    return {"status": "deleted", "id": client_id}
+
+@router.delete("/clients")
+async def delete_client_by_body(
+    payload: dict = Body(...),
+    _: dict = Depends(verify_admin),
+    db: AsyncSession = Depends(get_session),
+):
+    try:
+        client_id = int(payload.get("id", 0))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid 'id'")
+    if client_id <= 0:
+        raise HTTPException(status_code=400, detail="Invalid 'id'")
+
+    async with db.begin():
+        await _delete_client_tx(db, client_id)
+    return {"status": "deleted", "id": client_id}
+
+# --------------- Accounts ---------------
 @router.get("/accounts")
 async def list_accounts(
     _: dict = Depends(verify_admin),
@@ -53,9 +103,10 @@ async def list_accounts(
 ):
     q = text("""
         SELECT
+            id,
+            client_id,
             ig_user_id,
             username,
-            client_id,
             COALESCE(bot_enabled, true) AS bot_enabled,
             COALESCE(active, true)       AS active,
             created_at
@@ -66,27 +117,74 @@ async def list_accounts(
     rows = await db.execute(q, {"limit": limit})
     return [dict(r) for r in rows.mappings().all()]
 
-@router.patch("/accounts/{ig_user_id}")
-async def toggle_account(
-    ig_user_id: str,
+@router.post("/accounts")
+async def create_account(
+    payload: dict = Body(...),
     _: dict = Depends(verify_admin),
     db: AsyncSession = Depends(get_session),
-    payload: dict = Body(...),
 ):
+    # payload atteso: {"client_id": 5, "ig_user_id":"...", "username":"..."}
+    ig_user_id = (payload.get("ig_user_id") or "").strip()
+    username = (payload.get("username") or "").strip()
+    client_id = payload.get("client_id")
+
+    if not ig_user_id or not username or not client_id:
+        raise HTTPException(status_code=400, detail="client_id, ig_user_id e username sono obbligatori")
+
+    # esistenza dup IG
+    exists_q = text("SELECT 1 FROM mfai_app.instagram_accounts WHERE ig_user_id = :ig LIMIT 1")
+    if (await db.execute(exists_q, {"ig": ig_user_id})).first():
+        raise HTTPException(status_code=409, detail="Instagram account già presente")
+
     q = text("""
-        UPDATE mfai_app.instagram_accounts
-        SET bot_enabled = :b
-        WHERE ig_user_id = :id
-        RETURNING ig_user_id, bot_enabled
+        INSERT INTO mfai_app.instagram_accounts
+            (client_id, ig_user_id, username, active, bot_enabled)
+        VALUES
+            (:client_id, :ig_user_id, :username, true, true)
+        RETURNING id, client_id, ig_user_id, username, active, bot_enabled, created_at
     """)
-    res = await db.execute(q, {"b": bool(payload["bot_enabled"]), "id": ig_user_id})
-    row = res.mappings().first()
+    res = await db.execute(q, {
+        "client_id": client_id,
+        "ig_user_id": ig_user_id,
+        "username": username,
+    })
     await db.commit()
+    return dict(res.mappings().one())
+
+@router.patch("/accounts/{ig_user_id}")
+async def update_account_mapping(
+    ig_user_id: str = Path(..., description="Instagram User ID"),
+    payload: dict = Body(...),
+    _: dict = Depends(verify_admin),
+    db: AsyncSession = Depends(get_session),
+):
+    # campi ammessi per update
+    fields = []
+    params = {"ig_user_id": ig_user_id}
+
+    for k in ("client_id", "active", "bot_enabled", "username"):
+        if k in payload:
+            fields.append(f"{k} = :{k}")
+            params[k] = payload[k]
+
+    if not fields:
+        raise HTTPException(status_code=400, detail="Nessun campo valido da aggiornare")
+
+    q = text(f"""
+        UPDATE mfai_app.instagram_accounts
+        SET {", ".join(fields)}
+        WHERE ig_user_id = :ig_user_id
+        RETURNING id, client_id, ig_user_id, username, active, bot_enabled, created_at
+    """)
+    res = await db.execute(q, params)
+    row = res.mappings().first()
     if not row:
-        return {"error": "not_found", "ig_user_id": ig_user_id}
+        raise HTTPException(status_code=404, detail="Account IG non trovato")
+
+    await db.commit()
     return dict(row)
 
-# ---- Tokens (join con instagram_accounts per avere ig_user_id/username)
+# ---------------- Tokens ----------------
 @router.get("/tokens")
 async def list_tokens(
     _: dict = Depends(verify_admin),
@@ -114,7 +212,39 @@ async def list_tokens(
         rows = await db.execute(q, {"a": active})
     return [dict(r) for r in rows.mappings().all()]
 
-# ---- Logs (versione robusta)
+@router.post("/tokens")
+async def save_token(
+    payload: dict = Body(...),
+    _: dict = Depends(verify_admin),
+    db: AsyncSession = Depends(get_session),
+):
+    # payload atteso: {"ig_user_id":"...", "access_token":"...", "long_lived":true, "expires_at":"2025-11-01T12:00:00Z"}
+    ig_user_id = (payload.get("ig_user_id") or "").strip()
+    access_token = payload.get("access_token") or payload.get("token")
+    long_lived = bool(payload.get("long_lived", True))
+    expires_at = payload.get("expires_at")  # opzionale, ISO8601 o NULL
+
+    if not ig_user_id or not access_token:
+        raise HTTPException(status_code=400, detail="ig_user_id e access_token sono obbligatori")
+
+    # risolvi ig_account_id
+    r = await db.execute(text("SELECT id FROM mfai_app.instagram_accounts WHERE ig_user_id=:ig"), {"ig": ig_user_id})
+    ig_account_id = r.scalar_one_or_none()
+    if ig_account_id is None:
+        raise HTTPException(status_code=404, detail="Instagram account non mappato")
+
+    async with db.begin():
+        # disattiva token precedenti
+        await db.execute(text("UPDATE mfai_app.tokens SET active=false WHERE ig_account_id=:aid"), {"aid": ig_account_id})
+        # inserisci nuovo token attivo
+        res = await db.execute(text("""
+            INSERT INTO mfai_app.tokens (ig_account_id, access_token, active, long_lived, expires_at)
+            VALUES (:aid, :tok, true, :ll, :exp)
+            RETURNING id, ig_account_id, active, long_lived, expires_at, created_at
+        """), {"aid": ig_account_id, "tok": access_token, "ll": long_lived, "exp": expires_at})
+    return dict(res.mappings().one())
+
+# ---------------- Logs ----------------
 @router.get("/logs")
 async def list_logs(
     _: dict = Depends(verify_admin),
@@ -129,147 +259,3 @@ async def list_logs(
     """)
     rows = await db.execute(q, {"limit": limit})
     return [dict(r) for r in rows.mappings().all()]
-
-@router.post("/accounts")
-async def create_account(
-    _: dict = Depends(verify_admin),
-    db: AsyncSession = Depends(get_session),
-    payload: dict = Body(...)
-):
-    # payload: {"client_id": 5, "ig_user_id":"...", "username":"..."}
-    exists_q = text("SELECT 1 FROM mfai_app.instagram_accounts WHERE ig_user_id = :ig LIMIT 1")
-    if (await db.execute(exists_q, {"ig": payload["ig_user_id"]})).first():
-        return {"error": "already_exists", "ig_user_id": payload["ig_user_id"]}
-
-    q = text("""
-        INSERT INTO mfai_app.instagram_accounts
-            (client_id, ig_user_id, username, active, bot_enabled)
-        VALUES
-            (:client_id, :ig_user_id, :username, true, true)
-        RETURNING id, client_id, ig_user_id, username, active, bot_enabled, created_at
-    """)
-    row = await db.execute(q, {
-        "client_id": payload["client_id"],
-        "ig_user_id": payload["ig_user_id"],
-        "username": payload["username"],
-    })
-    await db.commit()
-    return dict(row.mappings().one())
-
-
-# --- PATCH /admin/accounts/{ig_user_id} : aggiorna mapping IG (client_id/active/bot_enabled/username) ---
-from fastapi import Path
-from sqlalchemy.ext.asyncio import AsyncSession
-
-@router.patch("/accounts/{ig_user_id}")
-async def update_account_mapping(
-    ig_user_id: str = Path(..., description="Instagram User ID"),
-    payload: dict = Body(...),
-    _: dict = Depends(verify_admin),
-    db: AsyncSession = Depends(get_session),
-):
-    fields = []
-    params = {"ig_user_id": ig_user_id}
-
-    # campi ammessi
-    for k in ("client_id", "active", "bot_enabled", "username"):
-        if k in payload:
-            fields.append(f"{k} = :{k}")
-            params[k] = payload[k]
-
-    if not fields:
-        raise HTTPException(status_code=400, detail="Nessun campo valido da aggiornare")
-
-    q = text(f"""
-        UPDATE mfai_app.instagram_accounts
-        SET {", ".join(fields)}
-        WHERE ig_user_id = :ig_user_id
-        RETURNING id, client_id, ig_user_id, username, active, bot_enabled, created_at
-    """)
-    res = await db.execute(q, params)
-    row = res.mappings().first()
-    if not row:
-        raise HTTPException(status_code=404, detail="Account IG non trovato")
-
-    await db.commit()
-    return dict(row)
-
-# --- PATCH /admin/accounts/{ig_user_id} : aggiorna mapping IG (client_id/active/bot_enabled/username) ---
-from fastapi import Path, Body, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text
-from app.security_admin import verify_admin
-from app.db_session import get_session
-
-@router.patch("/accounts/{ig_user_id}")
-async def update_account_mapping(
-    ig_user_id: str = Path(..., description="Instagram User ID"),
-    payload: dict = Body(...),
-    _: dict = Depends(verify_admin),
-    db: AsyncSession = Depends(get_session),
-):
-    fields = []
-    params = {"ig_user_id": ig_user_id}
-
-    # campi ammessi
-    for k in ("client_id", "active", "bot_enabled", "username"):
-        if k in payload:
-            fields.append(f"{k} = :{k}")
-            params[k] = payload[k]
-
-    if not fields:
-        raise HTTPException(status_code=400, detail="Nessun campo valido da aggiornare")
-
-    q = text(f"""
-        UPDATE mfai_app.instagram_accounts
-        SET {", ".join(fields)}
-        WHERE ig_user_id = :ig_user_id
-        RETURNING id, client_id, ig_user_id, username, active, bot_enabled, created_at
-    """)
-    res = await db.execute(q, params)
-    row = res.mappings().first()
-    if not row:
-        raise HTTPException(status_code=404, detail="Account IG non trovato")
-
-    await db.commit()
-    return dict(row)
-
-# --- POST /admin/accounts/reassign : sposta un IG su un altro client_id e opzionalmente attiva bot/account ---
-from fastapi import Body, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text
-from app.security_admin import verify_admin
-from app.db_session import get_session
-
-@router.post("/accounts/reassign")
-async def reassign_account(
-    payload: dict = Body(...),
-    _: dict = Depends(verify_admin),
-    db: AsyncSession = Depends(get_session),
-):
-    ig_user_id = payload.get("ig_user_id")
-    client_id = payload.get("client_id")
-    if not ig_user_id or not client_id:
-        raise HTTPException(status_code=400, detail="ig_user_id e client_id sono obbligatori")
-
-    q = text("""
-        UPDATE mfai_app.instagram_accounts
-        SET client_id = :client_id,
-            active = COALESCE(:active, active),
-            bot_enabled = COALESCE(:bot_enabled, bot_enabled),
-            username = COALESCE(:username, username)
-        WHERE ig_user_id = :ig_user_id
-        RETURNING id, client_id, ig_user_id, username, active, bot_enabled, created_at
-    """)
-    res = await db.execute(q, {
-        "ig_user_id": ig_user_id,
-        "client_id": client_id,
-        "active": payload.get("active"),
-        "bot_enabled": payload.get("bot_enabled"),
-        "username": payload.get("username"),
-    })
-    row = res.mappings().first()
-    if not row:
-        raise HTTPException(status_code=404, detail="Account IG non trovato")
-    await db.commit()
-    return dict(row)
