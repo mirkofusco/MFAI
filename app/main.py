@@ -4,7 +4,7 @@
 
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,364 +15,23 @@ from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
-from app.db import engine  # engine async verso Neon
-app.mount("/ui2/static", StaticFiles(directory="app/admin_ui/static"), name="ui2_static")
+# --- DB engine async (Neon/altro) ---
+from app.db import engine  # engine async
 
+# -----------------------------
+# CREA L'APP PRIMA DI TUTTO
+# -----------------------------
 APP_NAME = "MF.AI"
 app = FastAPI(title=APP_NAME)
 
-# -----------------------------------------------------------
-# UI /ui2 (CSP-safe: niente inline; asset locali)
-# -----------------------------------------------------------
-@app.get("/ui2", response_class=HTMLResponse)
-def ui2_page():
-    return """<!doctype html>
-<html lang="it">
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>MF.AI — Clienti</title>
-  <link rel="stylesheet" href="/ui2.css">
-</head>
-<body>
-  <div id="app"></div>
-  <script src="/ui2.js" defer></script>
-</body>
-</html>"""
-
-@app.get("/ui2.css")
-def ui2_css():
-    return Response(
-        """:root{--bg:#0b0f19;--panel:#12182a;--text:#e8eef6;--muted:#8ea0b5;--border:#1f2942;--accent:#4da3ff;--ok:#22c55e;--bad:#ef4444;--btn:#0f1730}
-*{box-sizing:border-box}html,body{height:100%}body{margin:0;background:var(--bg);color:var(--text);font:14px system-ui,Segoe UI,Roboto}
-.app{display:grid;grid-template-columns:300px 1fr;height:100vh}
-.side{border-right:1px solid var(--border);background:var(--panel);display:flex;flex-direction:column}
-.brand{padding:14px 12px;border-bottom:1px solid var(--border);font-weight:700}
-.search{padding:10px 12px}.search input{width:100%;padding:10px;border-radius:10px;border:1px solid var(--border);background:#0d1322;color:var(--text)}
-.list{overflow:auto;padding:8px}
-.item{padding:10px;border-radius:10px;cursor:pointer;margin:6px 4px}
-.item:hover{background:#0e162c}.item.active{outline:1px solid var(--accent);background:#0e1a33}
-.item h4{margin:0 0 4px 0;font-size:14px}.meta{color:var(--muted);font-size:12px}
-.main{display:flex;flex-direction:column}
-.bar{display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--border);padding:10px;background:#0d1426;justify-content:space-between}
-.crumb{padding:6px 10px;border:1px solid var(--border);border-radius:999px}
-.hint{color:var(--muted)}
-.content{padding:16px;overflow:auto}
-.card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:14px}
-.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:10px 0}
-.kv{display:flex;gap:6px;align-items:center;background:#0e1528;border:1px solid var(--border);padding:8px 10px;border-radius:10px}
-.kv b{opacity:.9}
-input[type="text"],textarea{width:100%;padding:10px;border-radius:10px;border:1px solid var(--border);background:#0d1322;color:var(--text);font:13px}
-button{padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--btn);color:var(--text);cursor:pointer}
-button.primary{outline:1px solid var(--accent)}
-button.danger{border-color:rgba(239,68,68,.4)}
-button:hover{filter:brightness(1.1)}
-.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid var(--border);border-radius:999px;font-size:12px}
-.chip.ok{background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.3);color:var(--ok)}
-.chip.bad{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.3);color:var(--bad)}
-.chip.neutral{background:#0e1528;color:#c7d2e2}
-.group{display:flex;align-items:center;gap:10px}
-.headerline{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
-.title{font-size:18px;font-weight:700}
-.log{font-family:ui-monospace,Menlo,Consolas;font-size:12px;background:#0c1222;border:1px solid #1b2442;border-radius:10px;padding:10px;white-space:pre-wrap;max-height:220px;overflow:auto}
-#app{display:grid;grid-template-columns:300px 1fr;height:100vh}
-""",
-        media_type="text/css"
-    )
-
-@app.get("/ui2.js")
-def ui2_js():
-    JS = '''(function(){
-  // API endpoints usati dalla UI
-  var api = {
-    clients: '/admin/clients',
-    accounts: '/admin/accounts',          // GET elenco + PATCH toggle bot
-    tokens: '/admin/tokens',              // GET elenco token
-    logs: '/admin/logs',                  // GET logs
-    prompts: function(cid){ return '/ui2/prompts/'+cid; }, // GET/PUT prompt unico "system"
-    adminUI: '/admin/ui'
-  };
-
-  var state = {clients:[], accounts:[], tokens:[], selected:null};
-  function $(s, el){ return (el||document).querySelector(s); }
-  function esc(s){
-    s = (s==null?'':String(s));
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  }
-  function repAll(str, find, repl){ return String(str).split(find).join(repl); }
-  function j(u,o){
-    o = o||{}; o.credentials = 'include';
-    return fetch(u,o).then(function(r){
-      if(!r.ok) return r.text().then(function(t){ throw new Error('HTTP '+r.status+' '+r.statusText+' on '+u+'\\n'+t); });
-      return r.json();
-    });
-  }
-
-  // Shell
-  var root = document.getElementById('app');
-  root.innerHTML =
-    '<aside class="side">'
-    + '<div class="brand">MF.AI — Clienti</div>'
-    + '<div class="search"><input id="q" placeholder="Cerca cliente…"></div>'
-    + '<div id="list" class="list"><div class="card empty">Carico clienti…</div></div>'
-    + '</aside>'
-    + '<main class="main">'
-    + '  <div class="bar">'
-    + '    <div style="display:flex;align-items:center;gap:8px">'
-    + '      <div id="crumb" class="crumb">Nessun cliente</div>'
-    + '      <span id="hint" class="hint"></span>'
-    + '    </div>'
-    + '    <div><a href="/admin/ui" target="_blank"><button title="Apri l\\'Admin classico in una nuova scheda">Admin classico</button></a></div>'
-    + '  </div>'
-    + '  <div id="detail" class="content"><div class="card empty">Seleziona un cliente dalla lista.</div></div>'
-    + '</main>';
-
-  function boot(){
-    $('#hint').textContent = 'Carico…';
-    Promise.all([
-      j(api.clients),
-      j(api.accounts),
-      j(api.tokens).catch(function(){ return []; })
-    ]).then(function(arr){
-      var c = arr[0], a = arr[1], t = arr[2];
-      state.clients=c; state.accounts=a; state.tokens=t;
-      renderList();
-      $('#hint').textContent = 'Clienti: '+c.length;
-      $('#q').addEventListener('input', function(e){ renderList(e.target.value); });
-    }).catch(function(err){
-      showFatal(err);
-      console.error(err);
-    });
-  }
-
-  function renderList(f){
-    f = f||'';
-    var box = $('#list'); box.innerHTML='';
-    var q = String(f).trim().toLowerCase();
-    var items = state.clients.filter(function(c){
-      var s = ((c.id||'')+' '+(c.name||'')+' '+(c.company||'')).toLowerCase();
-      return !q || s.indexOf(q) !== -1;
-    });
-    items.forEach(function(c){
-      var acc = (function(){ for(var i=0;i<state.accounts.length;i++){ if(state.accounts[i].client_id===c.id) return state.accounts[i]; } return null; })();
-      var el = document.createElement('div');
-      var username = acc ? '@'+esc(acc.username) : '—';
-      var botEnabled = (acc && acc.bot_enabled) ? 'ON' : 'OFF';
-      el.className = 'item' + (state.selected===c.id?' active':'');
-      el.innerHTML = '<h4>' + esc(c.name||c.company||('Cliente #'+c.id)) + '</h4>'
-                   + '<div class="meta">' + username + ' · Bot ' + botEnabled + '</div>';
-      el.onclick = function(){ select(c.id); };
-      box.appendChild(el);
-    });
-    if(items.length===0) box.innerHTML='<div class="card empty">Nessun risultato</div>';
-  }
-
-  function select(clientId){
-    state.selected=clientId; renderList($('#q').value||'');
-    var c=(function(){ for(var i=0;i<state.clients.length;i++){ if(state.clients[i].id===clientId) return state.clients[i]; } return null; })();
-    var acc=(function(){ for(var i=0;i<state.accounts.length;i++){ if(state.accounts[i].client_id===clientId) return state.accounts[i]; } return null; })();
-    $('#crumb').textContent = (c && (c.name||c.company)) ? (c.name||c.company) : ('Cliente #'+clientId);
-    $('#hint').textContent='Carico scheda…';
-
-    var prompts=null, promptsErr=null, logs=[];
-    j(api.prompts(clientId)).then(function(p){ prompts=p; })
-      .catch(function(e){ promptsErr=String(e); })
-      .then(function(){
-        return j(api.logs+'?client_id='+clientId+'&limit=30').then(function(l){ logs=l; }).catch(function(){});
-      })
-      .then(function(){
-        var toks=[];
-        if(acc){ for(var i=0;i<state.tokens.length;i++){ if(state.tokens[i].ig_account_id===acc.id) toks.push(state.tokens[i]); } }
-        renderDetail({c:c,acc:acc,toks:toks,logs:logs,prompts:prompts,promptsErr:promptsErr});
-        $('#hint').textContent='Pronto';
-      })
-      .catch(function(err){ showFatal(err); console.error(err); });
-  }
-
-  function headerLine(name){
-    return '<div class="headerline">'
-      + '<div class="title">'+esc(name||'Cliente')+'</div>'
-      + '<div class="group">'
-      +   '<button id="refresh">Ricarica scheda</button>'
-      +   '<a href="/admin/ui" target="_blank"><button>Admin classico</button></a>'
-      + '</div>'
-      + '</div>';
-  }
-
-  function renderDetail(ctx){
-    var c=ctx.c, acc=ctx.acc, toks=ctx.toks, logs=ctx.logs, prompts=ctx.prompts, promptsErr=ctx.promptsErr;
-    var d=document.getElementById('detail');
-
-    var statusChip = (acc && acc.active) ? '<span class="chip ok">Attivo</span>' : '<span class="chip bad">Disattivo</span>';
-    var botChip = (acc && acc.bot_enabled) ? '<span id="botchip" class="chip ok">ON</span>' : '<span id="botchip" class="chip bad">OFF</span>';
-
-    var botButtons = acc
-      ? '<div class="group" id="botButtons">'
-          + '<button id="btnBotOn"  class="primary">Attiva bot</button>'
-          + '<button id="btnBotOff" class="danger">Disattiva bot</button>'
-          + botChip
-          + '<span id="bots" class="hint"></span>'
-        + '</div>'
-      : '<span class="hint">Nessun account IG collegato.</span>';
-
-    var promptsCard='';
-    if(prompts){
-      var val = prompts.system || '';
-      val = repAll(repAll(val,'<','&lt;'),'>','&gt;');
-      promptsCard =
-        '<div class="card">'
-        + '<h3>Prompt cliente (unico)</h3>'
-        + '<div class="row"><textarea id="system" rows="8" placeholder="Scrivi qui il prompt completo...">'+val+'</textarea></div>'
-        + '<div class="row" style="justify-content:flex-end">'
-        +   '<span id="ps" class="hint" style="margin-right:8px"></span>'
-        +   '<button id="savep" class="primary">Salva</button>'
-        + '</div>'
-        + '</div>';
-    } else {
-      var info = promptsErr ? String(promptsErr).split('\\n')[0] : 'endpoint non raggiungibile';
-      promptsCard =
-        '<div class="card">'
-        + '<h3>Prompt cliente (unico)</h3>'
-        + '<div class="row">'
-        +   '<span class="chip neutral">Sezione disabilitata</span>'
-        +   '<span class="hint">/ui2/prompts/{client_id} non disponibile ('+esc(info)+').</span>'
-        + '</div>'
-        + '<div class="row"><button id="retryPrompts">Riprova</button>'
-        + '<a href="/admin/ui" target="_blank"><button>Admin classico</button></a></div>'
-        + '</div>';
-    }
-
-    var toksHtml = '';
-    if(toks && toks.length){
-      var lines = [];
-      for(var i=0;i<toks.length;i++){
-        var t=toks[i];
-        var when = t.expires_at ? new Date(t.expires_at).toLocaleString() : '—';
-        lines.push('• ' + (t.long_lived?'LLT':'SLT') + ' | scade: ' + when + ' | active=' + t.active);
-      }
-      toksHtml = '<div class="log">'+esc(lines.join('\\n'))+'</div>';
-    } else {
-      toksHtml = '<div class="meta">Nessun token per questo account.</div>';
-    }
-
-    var logsHtml = '';
-    if(logs && logs.length){
-      var L = [];
-      for(var i=0;i<logs.length;i++){
-        var x=logs[i];
-        var ts = new Date(x.ts || x.created_at).toLocaleString();
-        var dir = x.direction || '';
-        var payload = x.payload ? JSON.stringify(x.payload) : '';
-        L.push('['+ts+'] '+dir+' '+payload);
-      }
-      logsHtml = '<div class="log">'+esc(L.join('\\n'))+'</div>';
-    } else {
-      logsHtml = '<div class="meta">Nessun log recente.</div>';
-    }
-
-    d.innerHTML =
-      '<div class="card">'
-      +   headerLine((c && (c.name||c.company)) ? (c.name||c.company) : ('Cliente #'+c.id))
-      +   '<div class="row">'
-      +     '<div class="kv"><b>Client ID</b> '+String(c.id)+'</div>'
-      +     '<div class="kv"><b>IG</b> '+(acc?('@'+esc(acc.username)):'—')+'</div>'
-      +     '<div class="kv"><b>IG_USER_ID</b> '+(acc?esc(acc.ig_user_id):'—')+'</div>'
-      +     '<div class="kv"><b>Stato</b> '+statusChip+'</div>'
-      +   '</div>'
-      +   '<div class="row">'+botButtons+'</div>'
-      + '</div>'
-      + promptsCard
-      + '<div class="card"><h3>Token</h3>'+toksHtml+'</div>'
-      + '<div class="card"><h3>Ultimi log</h3>'+logsHtml+'</div>';
-
-    var refresh=$('#refresh'); if(refresh){ refresh.onclick=function(){ select(c.id); }; }
-
-    // BOT handlers — PATCH /admin/accounts {ig_user_id, bot_enabled}
-    var btnOn=$('#btnBotOn'), btnOff=$('#btnBotOff'), bots=$('#bots'), botchip=$('#botchip');
-    function setBot(enabled){
-      bots.textContent='…';
-      j(api.accounts,{
-        method:'PATCH',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({ ig_user_id: acc.ig_user_id, bot_enabled: enabled })
-      }).then(function(){
-        botchip.textContent = enabled ? 'ON' : 'OFF';
-        botchip.className = 'chip ' + (enabled ? 'ok' : 'bad');
-        bots.textContent='Salvato';
-        for(var i=0;i<state.accounts.length;i++){ if(state.accounts[i].id===acc.id){ state.accounts[i].bot_enabled = enabled; break; } }
-      }).catch(function(){
-        bots.textContent='Errore';
-      });
-    }
-    if(btnOn && btnOff && acc){ btnOn.onclick = function(){ setBot(true); }; btnOff.onclick = function(){ setBot(false); }; }
-
-    // Prompts handlers (campo unico "system")
-    var savep=$('#savep'), ps=$('#ps');
-    if(savep){
-      savep.onclick=function(){
-        ps.textContent='…';
-        fetch(api.prompts(c.id),{
-          method:'PUT',
-          credentials:'include',
-          headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({ system: $('#system').value })
-        }).then(function(){ ps.textContent='Salvato'; })
-          .catch(function(){ ps.textContent='Errore'; });
-      };
-    }
-    var retry=$('#retryPrompts'); if(retry){ retry.onclick=function(){ select(c.id); }; }
-  }
-
-  function showFatal(msg){
-    var app=document.getElementById('app');
-    app.innerHTML='<div style="padding:20px;font-family:system-ui"><h2>⚠️ Errore UI</h2>'
-      + '<pre style="white-space:pre-wrap;background:#111;color:#eee;padding:12px;border-radius:8px;border:1px solid #333;max-height:50vh;overflow:auto">'
-      + esc(String(msg)) + '</pre></div>';
-  }
-
-  try { boot(); } catch (e) { showFatal(e); console.error(e); }
-})();'''
-    return Response(JS, media_type="application/javascript")
-
-# -----------------------------------------------------------
-# Admin classico (ponte)
-# -----------------------------------------------------------
-@app.get("/admin/ui", response_class=HTMLResponse)
-def admin_ui_bridge():
-    return """<!doctype html><html lang="it"><head><meta charset="utf-8">
-<title>Admin classico</title></head><body style="font-family:system-ui;padding:20px">
-<h2>Admin classico</h2>
-<p>Se il vecchio pannello è disponibile, lo trovi qui:
-  <a href="/ui/clients">/ui/clients</a>
-</p>
-<p>Oppure usa la nuova interfaccia: <a href="/ui2">/ui2</a></p>
-</body></html>"""
-
-# -----------------------------------------------------------
-# Static (facoltativo)
-# -----------------------------------------------------------
+# -----------------------------
+# MOUNT STATIC (subito dopo app)
+# -----------------------------
+# Static della UI2 (JS/CSS locali sotto app/admin_ui/static)
 if os.path.isdir("app/admin_ui/static"):
+    app.mount("/ui2/static", StaticFiles(directory="app/admin_ui/static"), name="ui2_static")
+    # opzionale mirror su /static (non obbligatorio, utile se template legacy puntano qui)
     app.mount("/static", StaticFiles(directory="app/admin_ui/static"), name="static")
-
-# -----------------------------------------------------------
-# Router esterni (import safe — opzionali)
-# -----------------------------------------------------------
-try:
-    from app.routers.meta_webhook import router as meta_webhook_router
-    app.include_router(meta_webhook_router)
-except Exception as e:
-    print("Meta webhook router non caricato:", e)
-
-try:
-    from app.public_ui.routes import router as public_ui_router  # type: ignore
-    app.include_router(public_ui_router)
-except Exception as e:
-    print("Public UI router non caricato:", e)
-
-# -----------------------------------------------------------
-# Templates (Jinja2 opzionali)
-# -----------------------------------------------------------
-templates = Jinja2Templates(directory="app/templates") if os.path.isdir("app/templates") else None
 
 # -----------------------------------------------------------
 # CORS
@@ -411,6 +70,11 @@ async def security_headers(request: Request, call_next):
     return resp
 
 # -----------------------------------------------------------
+# Templates (Jinja2 opzionali)
+# -----------------------------------------------------------
+templates = Jinja2Templates(directory="app/templates") if os.path.isdir("app/templates") else None
+
+# -----------------------------------------------------------
 # API Key guard (per alcune POST/PUT opzionali)
 # -----------------------------------------------------------
 API_KEY = os.getenv("API_KEY", "")
@@ -427,7 +91,7 @@ try:
     from app.security_admin import verify_admin
 except Exception:
     async def verify_admin():
-        return None
+        return None  # no-op
 
 # -----------------------------------------------------------
 # SCHEMA SQL (con bot_enabled) + startup
@@ -520,7 +184,7 @@ async def ensure_schema():
         await conn.exec_driver_sql("SET search_path TO mfai_app;")
         for stmt in _split_sql(SCHEMA_SQL):
             await conn.exec_driver_sql(stmt)
-        # safety: aggiungi colonna bot_enabled se mancante
+        # safety: colonna bot_enabled se mancante
         await conn.exec_driver_sql("""
           ALTER TABLE mfai_app.instagram_accounts
           ADD COLUMN IF NOT EXISTS bot_enabled BOOLEAN NOT NULL DEFAULT FALSE;
@@ -556,7 +220,7 @@ async def ensure_schema():
             """)
 
 # -----------------------------------------------------------
-# Routes base
+# Routes base / health
 # -----------------------------------------------------------
 @app.get("/")
 def home():
@@ -575,6 +239,385 @@ async def db_health():
     async with engine.connect() as conn:
         r = await conn.execute(text("SELECT 'ok'"))
         return {"db": r.scalar_one()}
+
+# -----------------------------------------------------------
+# Admin classico (ponte)
+# -----------------------------------------------------------
+@app.get("/admin/ui", response_class=HTMLResponse)
+def admin_ui_bridge():
+    return """<!doctype html><html lang="it"><head><meta charset="utf-8">
+<title>Admin classico</title></head><body style="font-family:system-ui;padding:20px">
+<h2>Admin classico</h2>
+<p>Se il vecchio pannello è disponibile, lo trovi qui:
+  <a href="/ui/clients">/ui/clients</a>
+</p>
+<p>Oppure usa la nuova interfaccia: <a href="/ui2">/ui2</a></p>
+</body></html>"""
+
+# -----------------------------------------------------------
+# UI2 minimal (single page: /ui2 con /ui2.css e /ui2.js)
+# -----------------------------------------------------------
+@app.get("/ui2", response_class=HTMLResponse)
+def ui2_page():
+    return """<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>MF.AI — Clienti</title>
+  <link rel="stylesheet" href="/ui2.css">
+</head>
+<body>
+  <div id="app"></div>
+  <script src="/ui2.js" defer></script>
+</body>
+</html>"""
+
+@app.get("/ui2.css")
+def ui2_css():
+    return Response(
+        """:root{--bg:#0b0f19;--panel:#12182a;--text:#e8eef6;--muted:#8ea0b5;--border:#1f2942;--accent:#4da3ff;--ok:#22c55e;--bad:#ef4444;--btn:#0f1730}
+*{box-sizing:border-box}html,body{height:100%}body{margin:0;background:var(--bg);color:var(--text);font:14px system-ui,Segoe UI,Roboto}
+.app{display:grid;grid-template-columns:300px 1fr;height:100vh}
+.side{border-right:1px solid var(--border);background:var(--panel);display:flex;flex-direction:column}
+.brand{padding:14px 12px;border-bottom:1px solid var(--border);font-weight:700}
+.search{padding:10px 12px}.search input{width:100%;padding:10px;border-radius:10px;border:1px solid var(--border);background:#0d1322;color:var(--text)}
+.list{overflow:auto;padding:8px}
+.item{padding:10px;border-radius:10px;cursor:pointer;margin:6px 4px}
+.item:hover{background:#0e162c}.item.active{outline:1px solid var(--accent);background:#0e1a33}
+.item h4{margin:0 0 4px 0;font-size:14px}.meta{color:var(--muted);font-size:12px}
+.main{display:flex;flex-direction:column}
+.bar{display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--border);padding:10px;background:#0d1426;justify-content:space-between}
+.crumb{padding:6px 10px;border:1px solid var(--border);border-radius:999px}
+.hint{color:var(--muted)}
+.content{padding:16px;overflow:auto}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:14px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:10px 0}
+.kv{display:flex;gap:6px;align-items:center;background:#0e1528;border:1px solid var(--border);padding:8px 10px;border-radius:10px}
+.kv b{opacity:.9}
+input[type="text"],textarea{width:100%;padding:10px;border-radius:10px;border:1px solid var(--border);background:#0d1322;color:var(--text);font:13px}
+button{padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--btn);color:var(--text);cursor:pointer}
+button.primary{outline:1px solid var(--accent)}
+button.danger{border-color:rgba(239,68,68,.4)}
+button:hover{filter:brightness(1.1)}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid var(--border);border-radius:999px;font-size:12px}
+.chip.ok{background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.3);color:var(--ok)}
+.chip.bad{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.3);color:var(--bad)}
+.chip.neutral{background:#0e1528;color:#c7d2e2}
+.group{display:flex;align-items:center;gap:10px}
+.headerline{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.title{font-size:18px;font-weight:700}
+.log{font-family:ui-monospace,Menlo,Consolas;font-size:12px;background:#0c1222;border:1px solid #1b2442;border-radius:10px;padding:10px;white-space:pre-wrap;max-height:220px;overflow:auto}
+#app{display:grid;grid-template-columns:300px 1fr;height:100vh}
+""",
+        media_type="text/css"
+    )
+
+@app.get("/ui2.js")
+def ui2_js():
+    JS = '''(function(){
+  var api = {
+    clients: '/admin/clients',
+    accounts: '/admin/accounts',
+    tokens: '/admin/tokens',
+    logs: '/admin/logs',
+    prompts: function(cid){ return '/ui2/prompts/'+cid; },
+    adminUI: '/admin/ui'
+  };
+  var state = {clients:[], accounts:[], tokens:[], selected:null};
+  function $(s, el){ return (el||document).querySelector(s); }
+  function esc(s){ s=(s==null?'':String(s)); return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function repAll(str, find, repl){ return String(str).split(find).join(repl); }
+  function j(u,o){ o=o||{}; o.credentials='include'; return fetch(u,o).then(function(r){ if(!r.ok) return r.text().then(function(t){ throw new Error('HTTP '+r.status+' '+r.statusText+' on '+u+'\\n'+t); }); return r.json(); }); }
+  var root = document.getElementById('app');
+  root.innerHTML =
+    '<aside class="side">'
+    + '<div class="brand">MF.AI — Clienti</div>'
+    + '<div class="search"><input id="q" placeholder="Cerca cliente…"></div>'
+    + '<div id="list" class="list"><div class="card empty">Carico clienti…</div></div>'
+    + '</aside>'
+    + '<main class="main">'
+    + '  <div class="bar">'
+    + '    <div style="display:flex;align-items:center;gap:8px">'
+    + '      <div id="crumb" class="crumb">Nessun cliente</div>'
+    + '      <span id="hint" class="hint"></span>'
+    + '    </div>'
+    + '    <div><a href="/admin/ui" target="_blank"><button title="Apri l\\'Admin classico in una nuova scheda">Admin classico</button></a></div>'
+    + '  </div>'
+    + '  <div id="detail" class="content"><div class="card empty">Seleziona un cliente dalla lista.</div></div>'
+    + '</main>';
+  function boot(){
+    $('#hint').textContent = 'Carico…';
+    Promise.all([ j(api.clients), j(api.accounts), j(api.tokens).catch(function(){ return []; }) ])
+    .then(function(arr){
+      state.clients=arr[0]; state.accounts=arr[1]; state.tokens=arr[2];
+      renderList();
+      $('#hint').textContent = 'Clienti: '+state.clients.length;
+      $('#q').addEventListener('input', function(e){ renderList(e.target.value); });
+    }).catch(function(err){ showFatal(err); console.error(err); });
+  }
+  function renderList(f){
+    f=f||''; var box=$('#list'); box.innerHTML='';
+    var q=String(f).trim().toLowerCase();
+    var items = state.clients.filter(function(c){
+      var s = ((c.id||'')+' '+(c.name||'')+' '+(c.company||'')+' '+(c.email||'')).toLowerCase();
+      return !q || s.indexOf(q)!==-1;
+    });
+    items.forEach(function(c){
+      var acc = state.accounts.find(function(a){ return a.client_id===c.id; });
+      var el = document.createElement('div');
+      var username = acc ? '@'+esc(acc.username) : '—';
+      var botEnabled = (acc && acc.bot_enabled) ? 'ON' : 'OFF';
+      el.className = 'item' + (state.selected===c.id?' active':'');
+      el.innerHTML = '<h4>' + esc(c.name||c.company||('Cliente #'+c.id)) + '</h4>'
+                   + '<div class="meta">' + username + ' · Bot ' + botEnabled + '</div>';
+      el.onclick = function(){ select(c.id); };
+      box.appendChild(el);
+    });
+    if(items.length===0) box.innerHTML='<div class="card empty">Nessun risultato</div>';
+  }
+  function select(clientId){
+    state.selected=clientId; renderList($('#q').value||'');
+    var c = state.clients.find(function(x){ return x.id===clientId; });
+    var acc = state.accounts.find(function(x){ return x.client_id===clientId; });
+    $('#crumb').textContent = (c && (c.name||c.company)) ? (c.name||c.company) : ('Cliente #'+clientId);
+    $('#hint').textContent='Carico scheda…';
+    var prompts=null, promptsErr=null, logs=[];
+    j(api.prompts(clientId)).then(function(p){ prompts=p; })
+      .catch(function(e){ promptsErr=String(e); })
+      .then(function(){ return j(api.logs+'?client_id='+clientId+'&limit=30').then(function(l){ logs=l; }).catch(function(){}); })
+      .then(function(){
+        var toks=[]; if(acc){ for(var i=0;i<state.tokens.length;i++){ if(state.tokens[i].ig_account_id===acc.id) toks.push(state.tokens[i]); } }
+        renderDetail({c:c,acc:acc,toks:toks,logs:logs,prompts:prompts,promptsErr:promptsErr});
+        $('#hint').textContent='Pronto';
+      })
+      .catch(function(err){ showFatal(err); console.error(err); });
+  }
+  function headerLine(name){
+    return '<div class="headerline">'
+      + '<div class="title">'+esc(name||'Cliente')+'</div>'
+      + '<div class="group">'
+      +   '<button id="refresh">Ricarica scheda</button>'
+      +   '<a href="/admin/ui" target="_blank"><button>Admin classico</button></a>'
+      + '</div>'
+      + '</div>';
+  }
+  function renderDetail(ctx){
+    var c=ctx.c, acc=ctx.acc, toks=ctx.toks, logs=ctx.logs, prompts=ctx.prompts, promptsErr=ctx.promptsErr;
+    var d=document.getElementById('detail');
+    var statusChip = (acc && acc.active) ? '<span class="chip ok">Attivo</span>' : '<span class="chip bad">Disattivo</span>';
+    var botChip = (acc && acc.bot_enabled) ? '<span id="botchip" class="chip ok">ON</span>' : '<span id="botchip" class="chip bad">OFF</span>';
+    var botButtons = acc
+      ? '<div class="group" id="botButtons">'
+          + '<button id="btnBotOn"  class="primary">Attiva bot</button>'
+          + '<button id="btnBotOff" class="danger">Disattiva bot</button>'
+          + botChip
+          + '<span id="bots" class="hint"></span>'
+        + '</div>'
+      : '<span class="hint">Nessun account IG collegato.</span>';
+    var promptsCard='';
+    if(prompts){
+      var val = prompts.system || '';
+      val = repAll(repAll(val,'<','&lt;'),'>','&gt;');
+      promptsCard =
+        '<div class="card">'
+        + '<h3>Prompt cliente (unico)</h3>'
+        + '<div class="row"><textarea id="system" rows="8" placeholder="Scrivi qui il prompt completo...">'+val+'</textarea></div>'
+        + '<div class="row" style="justify-content:flex-end">'
+        +   '<span id="ps" class="hint" style="margin-right:8px"></span>'
+        +   '<button id="savep" class="primary">Salva</button>'
+        + '</div>'
+        + '</div>';
+    } else {
+      var info = promptsErr ? String(promptsErr).split('\\n')[0] : 'endpoint non raggiungibile';
+      promptsCard =
+        '<div class="card">'
+        + '<h3>Prompt cliente (unico)</h3>'
+        + '<div class="row">'
+        +   '<span class="chip neutral">Sezione disabilitata</span>'
+        +   '<span class="hint">/ui2/prompts/{client_id} non disponibile ('+esc(info)+').</span>'
+        + '</div>'
+        + '<div class="row"><button id="retryPrompts">Riprova</button>'
+        + '<a href="/admin/ui" target="_blank"><button>Admin classico</button></a></div>'
+        + '</div>';
+    }
+    var toksHtml = '';
+    if(toks && toks.length){
+      var lines = [];
+      for(var i=0;i<toks.length;i++){
+        var t=toks[i];
+        var when = t.expires_at ? new Date(t.expires_at).toLocaleString() : '—';
+        lines.push('• ' + (t.long_lived?'LLT':'SLT') + ' | scade: ' + when + ' | active=' + t.active);
+      }
+      toksHtml = '<div class="log">'+esc(lines.join('\\n'))+'</div>';
+    } else {
+      toksHtml = '<div class="meta">Nessun token per questo account.</div>';
+    }
+    var logsHtml = '';
+    if(logs && logs.length){
+      var L = [];
+      for(var i=0;i<logs.length;i++){
+        var x=logs[i];
+        var ts = new Date(x.ts || x.created_at).toLocaleString();
+        var dir = x.direction || '';
+        var payload = x.payload ? JSON.stringify(x.payload) : '';
+        L.push('['+ts+'] '+dir+' '+payload);
+      }
+      logsHtml = '<div class="log">'+esc(L.join('\\n'))+'</div>';
+    } else {
+      logsHtml = '<div class="meta">Nessun log recente.</div>';
+    }
+    d.innerHTML =
+      '<div class="card">'
+      +   headerLine((c && (c.name||c.company)) ? (c.name||c.company) : ('Cliente #'+c.id))
+      +   '<div class="row">'
+      +     '<div class="kv"><b>Client ID</b> '+String(c.id)+'</div>'
+      +     '<div class="kv"><b>IG</b> '+(acc?('@'+esc(acc.username)):'—')+'</div>'
+      +     '<div class="kv"><b>IG_USER_ID</b> '+(acc?esc(acc.ig_user_id):'—')+'</div>'
+      +     '<div class="kv"><b>Stato</b> '+statusChip+'</div>'
+      +   '</div>'
+      +   '<div class="row">'+botButtons+'</div>'
+      + '</div>'
+      + promptsCard
+      + '<div class="card"><h3>Token</h3>'+toksHtml+'</div>'
+      + '<div class="card"><h3>Ultimi log</h3>'+logsHtml+'</div>';
+    var refresh=$('#refresh'); if(refresh){ refresh.onclick=function(){ select(c.id); }; }
+    var btnOn=$('#btnBotOn'), btnOff=$('#btnBotOff'), bots=$('#bots'), botchip=$('#botchip');
+    function setBot(enabled){
+      bots.textContent='…';
+      j(api.accounts,{
+        method:'PATCH',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ ig_user_id: acc.ig_user_id, bot_enabled: enabled })
+      }).then(function(){
+        botchip.textContent = enabled ? 'ON' : 'OFF';
+        botchip.className = 'chip ' + (enabled ? 'ok' : 'bad');
+        bots.textContent='Salvato';
+        for(var i=0;i<state.accounts.length;i++){
+          if(state.accounts[i].id===acc.id){ state.accounts[i].bot_enabled = enabled; break; }
+        }
+      }).catch(function(){ bots.textContent='Errore'; });
+    }
+    if(btnOn && btnOff && acc){ btnOn.onclick=function(){ setBot(true); }; btnOff.onclick=function(){ setBot(false); }; }
+    var savep=$('#savep'), ps=$('#ps');
+    if(savep){
+      savep.onclick=function(){
+        ps.textContent='…';
+        fetch(api.prompts(c.id),{
+          method:'PUT',
+          credentials:'include',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({ system: $('#system').value })
+        }).then(function(){ ps.textContent='Salvato'; })
+          .catch(function(){ ps.textContent='Errore'; });
+      };
+    }
+    var retry=$('#retryPrompts'); if(retry){ retry.onclick=function(){ select(c.id); }; }
+  }
+  function showFatal(msg){
+    var app=document.getElementById('app');
+    app.innerHTML='<div style="padding:20px;font-family:system-ui"><h2>⚠️ Errore UI</h2>'
+      + '<pre style="white-space:pre-wrap;background:#111;color:#eee;padding:12px;border-radius:8px;border:1px solid #333;max-height:50vh;overflow:auto">'
+      + esc(String(msg)) + '</pre></div>';
+  }
+  try { boot(); } catch (e) { showFatal(e); console.error(e); }
+})();'''
+    return Response(JS, media_type="application/javascript")
+
+# -----------------------------------------------------------
+# UI2X e UI2M varianti (come da tuo file)
+# -----------------------------------------------------------
+@app.get("/ui2x", response_class=HTMLResponse)
+def ui2x_page():
+    return """<!doctype html><html lang="it"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>MF.AI — Clienti (UI2X)</title>
+<link rel="stylesheet" href="/ui2.css"></head>
+<body><div id="app"></div><script src="/ui2x.js" defer></script></body></html>"""
+
+@app.get("/ui2x.js")
+def ui2x_js():
+    JS = '''(function(){
+  var api={clients:'/admin/clients',accounts:'/admin/accounts',tokens:'/admin/tokens',logs:'/admin/logs',
+           prompts:function(cid){return '/ui2/prompts/'+cid;},adminUI:'/admin/ui'};
+  var state={clients:[],accounts:[],tokens:[],selected:null};
+  function $(s,el){return (el||document).querySelector(s);}
+  function j(u,o){o=o||{};o.credentials='include';return fetch(u,o).then(function(r){if(!r.ok)return r.text().then(function(t){throw new Error('HTTP '+r.status+' '+r.statusText+' on '+u+'\\n'+t);});var ct=(r.headers.get('content-type')||'');return ct.indexOf('application/json')>=0?r.json():r.text();});}
+  function esc(s){s=(s==null?'':String(s));return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+  var root=document.getElementById('app');
+  root.innerHTML='<aside class="side"><div class="brand">MF.AI — Clienti</div><div class="search"><input id="q" placeholder="Cerca cliente…"></div><div id="list" class="list"><div class="card empty">Carico clienti…</div></div></aside>'
+  + '<main class="main"><div class="bar"><div style="display:flex;align-items:center;gap:8px"><div id="crumb" class="crumb">Nessun cliente</div><span id="hint" class="hint"></span></div><div class="group"><button id="btn-new" class="primary">+ Nuovo cliente</button><a href="/admin/ui" target="_blank"><button>Admin classico</button></a></div></div><div id="detail" class="content"><div class="card empty">Seleziona un cliente.</div></div></main>';
+  function boot(){ $('#hint').textContent='Carico…'; Promise.all([j(api.clients),j(api.accounts),j(api.tokens).catch(function(){return[];})]).then(function(a){state.clients=a[0];state.accounts=a[1];state.tokens=a[2];renderList();$('#hint').textContent='Clienti: '+state.clients.length;$('#q').addEventListener('input',function(e){renderList(e.target.value);});$('#btn-new').addEventListener('click',openCreateForm);}).catch(showFatal); }
+  function renderList(f){f=f||'';var box=$('#list');box.innerHTML='';var q=String(f).trim().toLowerCase();var items=state.clients.filter(function(c){var s=((c.id||'')+' '+(c.name||'')+' '+(c.email||'')+' '+(c.company||'')).toLowerCase();return !q||s.indexOf(q)!==-1;});items.forEach(function(c){var acc=state.accounts.find(function(a){return a.client_id===c.id;});var el=document.createElement('div');var username=acc?'@'+esc(acc.username):'—';var botEnabled=acc&&acc.bot_enabled?'ON':'OFF';el.className='item'+(state.selected===c.id?' active':'');el.innerHTML='<h4>'+esc(c.name||'(senza nome)')+'</h4>'+'<div class="meta">ID '+esc(c.id)+' • '+esc(c.email||'no email')+' • '+esc(username)+' • BOT '+botEnabled+'</div>';el.addEventListener('click',function(){selectClient(c.id);});box.appendChild(el);});if(items.length===0){var empty=document.createElement('div');empty.className='card empty';empty.textContent='Nessun risultato.';box.appendChild(empty);} }
+  function selectClient(id){state.selected=id;var c=state.clients.find(function(x){return x.id===id;});$('#crumb').textContent=c?(c.name||('Cliente '+id)):'Nessun cliente';renderDetail(c);renderList($('#q').value);}
+  function renderDetail(c){var box=$('#detail');if(!c){box.innerHTML='<div class="card empty">Seleziona un cliente.</div>';return;}var acc=state.accounts.find(function(a){return a.client_id===c.id;});var html='';html+='<div class="card"><div class="headerline"><div class="title">Dettagli cliente</div><div class="group"><button id="btn-del" class="danger" title="Elimina definitivamente">Elimina</button></div></div><div class="row"><div class="kv"><b>ID</b>&nbsp;'+esc(c.id)+'</div><div class="kv"><b>Nome</b>&nbsp;'+esc(c.name||'—')+'</div><div class="kv"><b>Email</b>&nbsp;'+esc(c.email||'—')+'</div>'+(acc?'<div class="kv"><b>IG</b>&nbsp;@'+esc(acc.username||'')+'</div>':'')+(acc?'<div class="kv"><b>BOT</b>&nbsp;'+(acc.bot_enabled?'ON':'OFF')+'</div>':'')+'</div></div>';
+  html+='<div class="card"><div class="headerline"><div class="title">Prompt AI</div></div><div class="row"><textarea id="ta-prompt" rows="8" placeholder="Prompt di sistema…"></textarea></div><div class="row"><button id="btn-save-prompt" class="primary">Salva prompt</button></div></div>';
+  box.innerHTML=html; j('/ui2/prompts/'+c.id).then(function(r){ $('#ta-prompt').value=(r&&r.prompt)? r.prompt : ''; }).catch(function(){});
+  $('#btn-save-prompt').addEventListener('click', function(){ j('/ui2/prompts/'+c.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:$('#ta-prompt').value||''})}).then(function(){ flash('Prompt salvato'); }).catch(function(err){ alert('Errore salvataggio prompt:\\n'+err.message); }); });
+  $('#btn-del').addEventListener('click', function(){ if(!confirm('Eliminare definitivamente "'+(c.name||('ID '+c.id))+'"?')) return; var delBody=j(api.clients,{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:c.id})}); delBody.catch(function(){return j(api.clients+'/'+c.id,{method:'DELETE'});}).then(function(){ flash('Cliente eliminato'); state.clients=state.clients.filter(function(x){return x.id!==c.id;}); state.selected=null; renderList($('#q').value); renderDetail(null); }).catch(function(err){ alert('Errore eliminazione:\\n'+err.message); }); });
+  }
+  function openCreateForm(){var box=$('#detail');var card=document.createElement('div');card.className='card';card.innerHTML='<div class="headerline"><div class="title">Nuovo cliente</div></div><div class="row"><input id="new-name" type="text" placeholder="Nome azienda o referente"></div><div class="row"><input id="new-email" type="text" placeholder="Email (opzionale)"></div><div class="row"><button id="btn-create" class="primary">Crea</button></div>'; box.innerHTML=''; box.appendChild(card); $('#crumb').textContent='Nuovo cliente'; $('#btn-create').addEventListener('click', function(){var name=($('#new-name').value||'').trim();var email=($('#new-email').value||'').trim(); if(!name){alert('Inserisci un nome cliente');return;} j(api.clients,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(email?{name:name,email:email}:{name:name})}).then(function(created){flash('Cliente creato'); return j(api.clients).then(function(c){ state.clients=c; var found=c.find(function(x){ return (created&&created.id)? x.id===created.id : (x.name===name && x.email===email); }); if(found){ selectClient(found.id); } else { renderList($('#q').value); } }); }).catch(function(err){ alert('Errore creazione:\\n'+err.message); }); }); }
+  function flash(msg){var h=$('#hint'),old=h.textContent;h.textContent=msg;setTimeout(function(){h.textContent=old;},1400);}
+  function showFatal(err){var box=$('#detail'); box.innerHTML='<div class="card"><div class="title">Errore</div><div class="log"></div></div>'; box.querySelector('.log').textContent=(err&&err.stack)? err.stack : (''+err); }
+  boot();
+})();'''
+    return Response(JS, media_type="application/javascript")
+
+@app.get("/ui2m", response_class=HTMLResponse)
+def ui2m_page():
+    return """<!doctype html><html lang="it"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>MF.AI — Gestione Clienti (UI2M)</title>
+<link rel="stylesheet" href="/ui2.css"></head>
+<body><div id="app"></div><script src="/ui2m.js" defer></script></body></html>"""
+
+@app.get("/ui2m.js")
+def ui2m_js():
+    JS = '''(function(){
+      var api={clients:'/admin/clients',accounts:'/admin/accounts',tokens:'/admin/tokens'};
+      function $(s,el){return (el||document).querySelector(s);}
+      function j(u,o){o=o||{};o.credentials='include';return fetch(u,o).then(function(r){if(!r.ok)return r.text().then(function(t){throw new Error('HTTP '+r.status+' '+r.statusText+' on '+u+'\\n'+t);});var ct=(r.headers.get('content-type')||'');return ct.indexOf('application/json')>=0?r.json():r.text();});}
+      var root=document.getElementById('app');
+      root.innerHTML='<main class="main"><div class="bar"><div style="display:flex;gap:8px;align-items:center"><div class="crumb">Gestione Clienti</div><span id="hint" class="hint"></span></div><div class="group"><a href="/ui2"><button>Torna a UI2</button></a></div></div><div class="content">'
+      +'<div class="card"><div class="title">Nuovo cliente</div><div class="row"><input id="new-name" placeholder="Nome"></div><div class="row"><input id="new-email" placeholder="Email (opzionale)"></div><div class="row"><button id="btn-create" class="primary">Crea</button></div></div>'
+      +'<div class="card"><div class="title">Elimina cliente</div><div class="row"><input id="del-id" placeholder="ID cliente"></div><div class="row"><button id="btn-del" class="danger">Elimina</button></div><div class="hint">Operazione definitiva.</div></div>'
+      +'<div class="card"><div class="title">Collega Instagram (opzionale)</div><div class="row"><input id="ig-id" placeholder="ig_user_id (es. 1784…)"></div><div class="row"><input id="ig-username" placeholder="username (senza @)"></div><div class="row"><input id="ig-client" placeholder="client_id (ID cliente)"></div><div class="row"><label class="kv"><input id="ig-active" type="checkbox" checked> active</label><label class="kv"><input id="ig-bot" type="checkbox" checked> bot_enabled</label></div><div class="row"><button id="btn-link-ig">Collega/aggiorna</button></div></div>'
+      +'<div class="card"><div class="title">Token Instagram (opzionale)</div><div class="row"><input id="tok-ig" placeholder="ig_user_id (per associazione)"></div><div class="row"><textarea id="tok-value" rows="4" placeholder="Access token lungo…"></textarea></div><div class="row"><label class="kv"><input id="tok-long" type="checkbox" checked> long_lived</label></div><div class="row"><button id="btn-token">Salva token</button></div><div class="hint">Se POST /admin/tokens non è supportato in questa build, vedrai un errore.</div></div>'
+      +'</div></main>';
+      function flash(msg){var h=$('#hint'),old=h.textContent;h.textContent=msg;setTimeout(function(){h.textContent=old;},1400);}
+      document.getElementById('btn-create').addEventListener('click',function(){
+        var name=$('#new-name').value.trim(),email=$('#new-email').value.trim();
+        if(!name){alert('Inserisci un nome');return;}
+        j(api.clients,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(email?{name:name,email:email}:{name:name})})
+        .then(function(){flash('Cliente creato');$('#new-name').value='';$('#new-email').value='';})
+        .catch(function(e){alert('Errore creazione:\\n'+e.message);});
+      });
+      document.getElementById('btn-del').addEventListener('click',function(){
+        var id=($('#del-id').value||'').trim();if(!id){alert('Inserisci ID');return;}
+        if(!confirm('Eliminare definitivamente il cliente ID '+id+'?'))return;
+        j(api.clients+'/'+encodeURIComponent(id),{method:'DELETE'})
+          .catch(function(){return j(api.clients,{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:Number(id)})});})
+          .then(function(){flash('Cliente eliminato');$('#del-id').value='';})
+          .catch(function(e){alert('Errore eliminazione:\\n'+e.message);});
+      });
+      document.getElementById('btn-link-ig').addEventListener('click',function(){
+        var ig=$('#ig-id').value.trim(),user=$('#ig-username').value.trim(),cid=$('#ig-client').value.trim();
+        var active=$('#ig-active').checked,bot=$('#ig-bot').checked;
+        if(!ig||!user||!cid){alert('Compila ig_user_id, username e client_id');return;}
+        j(api.accounts+'/'+encodeURIComponent(ig),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({client_id:Number(cid),username:user,active:active,bot_enabled:bot})})
+        .catch(function(){return j(api.accounts,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ig_user_id:ig,username:user,client_id:Number(cid),active:active,bot_enabled:bot})});})
+        .then(function(){flash('Account IG aggiornato/creato');})
+        .catch(function(e){alert('Errore IG:\\n'+e.message);});
+      });
+      document.getElementById('btn-token').addEventListener('click',function(){
+        var ig=$('#tok-ig').value.trim(),tok=$('#tok-value').value.trim(),long=$('#tok-long').checked;
+        if(!ig||!tok){alert('Compila ig_user_id e token');return;}
+        j(api.tokens,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ig_user_id:ig,access_token:tok,long_lived:long})})
+        .then(function(){flash('Token salvato');$('#tok-value').value='';})
+        .catch(function(e){alert('Errore token:\\n'+e.message);});
+      });
+    })();'''
+    return Response(JS, media_type="application/javascript")
 
 # -----------------------------------------------------------
 # Admin JSON minimi che servono alla UI /ui2
@@ -636,7 +679,7 @@ async def admin_logs(
             ORDER BY ml.created_at DESC
             LIMIT :lim
         """)
-        params = {"cid": client_id, "lim": limit}
+        params: Dict[str, Any] = {"cid": client_id, "lim": limit}
     elif ig_account_id:
         q = text("""
             SELECT ml.id, ml.ig_account_id, ml.direction, ml.payload, ml.created_at
@@ -654,7 +697,6 @@ async def admin_logs(
             LIMIT :lim
         """)
         params = {"lim": limit}
-
     async with engine.connect() as conn:
         rows = (await conn.execute(q, params)).mappings().all()
     return rows
@@ -671,7 +713,6 @@ async def admin_tokens(
         FROM mfai_app.tokens t
     """
     params: Dict[str, object] = {"lim": limit}
-
     if client_id:
         q = text(base + """
             WHERE t.ig_account_id IN (
@@ -693,14 +734,10 @@ async def admin_tokens(
             ORDER BY t.created_at DESC
             LIMIT :lim
         """)
-
     async with engine.connect() as conn:
         rows = (await conn.execute(q, params)).mappings().all()
     return rows
 
-# -----------------------------------------------------------
-# Prompts endpoints dedicati per /ui2
-# -----------------------------------------------------------
 # -----------------------------------------------------------
 # Prompts endpoints dedicati per /ui2 (singolo campo "system")
 # -----------------------------------------------------------
@@ -727,7 +764,6 @@ async def ui2_put_prompts(client_id: int, body: ClientPromptSystem):
           ON CONFLICT (client_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
         """), {"cid": client_id, "v": body.system})
     return {"status": "ok"}
-
 
 # -----------------------------------------------------------
 # OAuth callback (se serve)
@@ -830,258 +866,25 @@ async def refresh_token(data: RefreshTokenPayload):
           VALUES (:ig, :token, :exp, TRUE, TRUE)
         """), {"ig": ig_account_id, "token": data.token, "exp": exp})
     return {"status": "ok", "ig_user_id": data.ig_user_id, "expires_at": exp.isoformat()}
-# --- MF.AI: mount routers (admin, prompts, webhook, admin UI classica) ---
-from app.routers.meta_webhook import router as meta_webhook_router
-from app.routers import admin_api, admin_prompts
-from app.admin_ui.routes import router as admin_ui_router
 
-# Monta i router (una sola volta)
+# -----------------------------------------------------------
+# Include router esterni opzionali (dopo app creata)
+# -----------------------------------------------------------
 try:
+    from app.routers.meta_webhook import router as meta_webhook_router
     app.include_router(meta_webhook_router)
+except Exception as e:
+    print("Meta webhook router non caricato:", e)
+
+try:
+    from app.routers import admin_api, admin_prompts
     app.include_router(admin_api.router)
     app.include_router(admin_prompts.router)
+except Exception as e:
+    print("Admin routers non caricati:", e)
+
+try:
+    from app.admin_ui.routes import router as admin_ui_router  # UI Admin “classica”
     app.include_router(admin_ui_router)
-except Exception:
-    # Se già montati in hot-reload, ignora
-    pass
-
-# Basic home/health (idempotenti)
-try:
-    @app.get("/")
-    def _home():
-        return {"ok": True, "app": "MF.AI"}
-except Exception:
-    pass
-
-try:
-    @app.get("/health")
-    def _health():
-        return {"ok": True}
-except Exception:
-    pass
-# -------- UI2X: variante sicura con Create/Delete clienti --------
-from fastapi.responses import Response
-
-@app.get("/ui2x", response_class=HTMLResponse)
-def ui2x_page():
-    return """<!doctype html>
-<html lang="it">
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>MF.AI — Clienti (UI2X)</title>
-  <link rel="stylesheet" href="/ui2.css">
-</head>
-<body>
-  <div id="app"></div>
-  <script src="/ui2x.js" defer></script>
-</body>
-</html>"""
-
-@app.get("/ui2x.js")
-def ui2x_js():
-    JS = '''(function(){
-  var api = {
-    clients: '/admin/clients',
-    accounts: '/admin/accounts',
-    tokens: '/admin/tokens',
-    logs: '/admin/logs',
-    prompts: function(cid){ return '/ui2/prompts/'+cid; },
-    adminUI: '/admin/ui'
-  };
-
-  var state = {clients:[], accounts:[], tokens:[], selected:null};
-  function $(s, el){ return (el||document).querySelector(s); }
-  function j(u,o){
-    o = o||{}; o.credentials = 'include';
-    return fetch(u,o).then(function(r){
-      if(!r.ok) return r.text().then(function(t){ throw new Error('HTTP '+r.status+' '+r.statusText+' on '+u+'\\n'+t); });
-      var ct = (r.headers.get('content-type')||''); return ct.indexOf('application/json')>=0 ? r.json() : r.text();
-    });
-  }
-  function esc(s){ s=(s==null?'':String(s)); return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-
-  var root = document.getElementById('app');
-  root.innerHTML =
-    '<aside class="side">'
-    + '<div class="brand">MF.AI — Clienti</div>'
-    + '<div class="search"><input id="q" placeholder="Cerca cliente…"></div>'
-    + '<div id="list" class="list"><div class="card empty">Carico clienti…</div></div>'
-    + '</aside>'
-    + '<main class="main">'
-    + '  <div class="bar">'
-    + '    <div style="display:flex;align-items:center;gap:8px">'
-    + '      <div id="crumb" class="crumb">Nessun cliente</div>'
-    + '      <span id="hint" class="hint"></span>'
-    + '    </div>'
-    + '    <div class="group">'
-    + '      <button id="btn-new" class="primary">+ Nuovo cliente</button>'
-    + '      <a href="/admin/ui" target="_blank"><button>Admin classico</button></a>'
-    + '    </div>'
-    + '  </div>'
-    + '  <div id="detail" class="content"><div class="card empty">Seleziona un cliente.</div></div>'
-    + '</main>';
-
-  function boot(){
-    $('#hint').textContent = 'Carico…';
-    Promise.all([ j(api.clients), j(api.accounts), j(api.tokens).catch(function(){return[];}) ])
-    .then(function(arr){
-      state.clients=arr[0]; state.accounts=arr[1]; state.tokens=arr[2];
-      renderList(); $('#hint').textContent='Clienti: '+state.clients.length;
-      $('#q').addEventListener('input', function(e){ renderList(e.target.value); });
-      $('#btn-new').addEventListener('click', openCreateForm);
-    }).catch(showFatal);
-  }
-
-  function renderList(f){
-    f=f||''; var box=$('#list'); box.innerHTML='';
-    var q = String(f).trim().toLowerCase();
-    var items = state.clients.filter(function(c){
-      var s=((c.id||'')+' '+(c.name||'')+' '+(c.email||'')+' '+(c.company||'')).toLowerCase();
-      return !q || s.indexOf(q)!==-1;
-    });
-    items.forEach(function(c){
-      var acc = state.accounts.find(function(a){ return a.client_id===c.id; });
-      var el = document.createElement('div');
-      var username = acc? '@'+esc(acc.username) : '—';
-      var botEnabled = acc && acc.bot_enabled ? 'ON' : 'OFF';
-      el.className='item'+(state.selected===c.id?' active':'');
-      el.innerHTML='<h4>'+esc(c.name||'(senza nome)')+'</h4>'
-                  +'<div class="meta">ID '+esc(c.id)+' • '+esc(c.email||'no email')+' • '+esc(username)+' • BOT '+botEnabled+'</div>';
-      el.addEventListener('click', function(){ selectClient(c.id); });
-      box.appendChild(el);
-    });
-    if(items.length===0){ var empty=document.createElement('div'); empty.className='card empty'; empty.textContent='Nessun risultato.'; box.appendChild(empty); }
-  }
-
-  function selectClient(id){
-    state.selected=id; var c = state.clients.find(function(x){return x.id===id;});
-    $('#crumb').textContent = c ? (c.name||('Cliente '+id)) : 'Nessun cliente';
-    renderDetail(c); renderList($('#q').value);
-  }
-
-  function renderDetail(c){
-    var box=$('#detail');
-    if(!c){ box.innerHTML='<div class="card empty">Seleziona un cliente.</div>'; return; }
-    var acc = state.accounts.find(function(a){return a.client_id===c.id;});
-    var html='';
-    html+='<div class="card"><div class="headerline"><div class="title">Dettagli cliente</div>'
-        + '<div class="group"><button id="btn-del" class="danger" title="Elimina definitivamente">Elimina</button></div></div>'
-        + '<div class="row"><div class="kv"><b>ID</b>&nbsp;'+esc(c.id)+'</div>'
-        + '<div class="kv"><b>Nome</b>&nbsp;'+esc(c.name||'—')+'</div>'
-        + '<div class="kv"><b>Email</b>&nbsp;'+esc(c.email||'—')+'</div>'
-        + (acc? '<div class="kv"><b>IG</b>&nbsp;@'+esc(acc.username||'')+'</div>' : '')
-        + (acc? '<div class="kv"><b>BOT</b>&nbsp;'+(acc.bot_enabled?'ON':'OFF')+'</div>' : '')
-        + '</div></div>';
-
-    html+='<div class="card"><div class="headerline"><div class="title">Prompt AI</div></div>'
-        + '<div class="row"><textarea id="ta-prompt" rows="8" placeholder="Prompt di sistema…"></textarea></div>'
-        + '<div class="row"><button id="btn-save-prompt" class="primary">Salva prompt</button></div>'
-        + '</div>';
-
-    box.innerHTML=html;
-
-    j('/ui2/prompts/'+c.id).then(function(r){ $('#ta-prompt').value=(r&&r.prompt)? r.prompt : ''; }).catch(function(){});
-
-    $('#btn-save-prompt').addEventListener('click', function(){
-      j('/ui2/prompts/'+c.id, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({prompt: $('#ta-prompt').value||''})})
-        .then(function(){ flash('Prompt salvato'); })
-        .catch(function(err){ alert('Errore salvataggio prompt:\\n'+err.message); });
-    });
-
-    $('#btn-del').addEventListener('click', function(){
-      if(!confirm('Eliminare definitivamente "'+(c.name||('ID '+c.id))+'"?')) return;
-      var delBody = j(api.clients, {method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id:c.id})});
-      delBody.catch(function(){ return j(api.clients+'/'+c.id, {method:'DELETE'}); })
-      .then(function(){
-        flash('Cliente eliminato');
-        state.clients = state.clients.filter(function(x){ return x.id!==c.id; });
-        state.selected=null; renderList($('#q').value); renderDetail(null);
-      }).catch(function(err){ alert('Errore eliminazione:\\n'+err.message); });
-    });
-  }
-
-  function openCreateForm(){
-    var box=$('#detail');
-    var card=document.createElement('div'); card.className='card';
-    card.innerHTML='<div class="headerline"><div class="title">Nuovo cliente</div></div>'
-      + '<div class="row"><input id="new-name" type="text" placeholder="Nome azienda o referente"></div>'
-      + '<div class="row"><input id="new-email" type="text" placeholder="Email (opzionale)"></div>'
-      + '<div class="row"><button id="btn-create" class="primary">Crea</button></div>';
-    box.innerHTML=''; box.appendChild(card); $('#crumb').textContent='Nuovo cliente';
-
-    $('#btn-create').addEventListener('click', function(){
-      var name=($('#new-name').value||'').trim(); var email=($('#new-email').value||'').trim();
-      if(!name){ alert('Inserisci un nome cliente'); return; }
-      j(api.clients, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(email? {name:name,email:email}:{name:name})})
-      .then(function(created){
-        flash('Cliente creato');
-        return j(api.clients).then(function(c){
-          state.clients=c;
-          var found = c.find(function(x){ return (created&&created.id)? x.id===created.id : (x.name===name && x.email===email); });
-          if(found){ selectClient(found.id); } else { renderList($('#q').value); }
-        });
-      }).catch(function(err){ alert('Errore creazione:\\n'+err.message); });
-    });
-  }
-
-  function flash(msg){ var h=$('#hint'), old=h.textContent; h.textContent=msg; setTimeout(function(){ h.textContent=old; },1400); }
-  function showFatal(err){
-    var box=$('#detail'); box.innerHTML='<div class="card"><div class="title">Errore</div><div class="log"></div></div>';
-    box.querySelector('.log').textContent=(err&&err.stack)? err.stack : (''+err);
-  }
-
-  boot();
-})();'''
-    return Response(JS, media_type="application/javascript")
-from fastapi.responses import Response, HTMLResponse
-@app.get("/ui2m", response_class=HTMLResponse)
-def ui2m_page():
-    return """<!doctype html><html lang="it"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>MF.AI — Gestione Clienti (UI2M)</title><link rel="stylesheet" href="/ui2.css"></head><body><div id="app"></div><script src="/ui2m.js" defer></script></body></html>"""
-@app.get("/ui2m.js")
-def ui2m_js():
-    JS = '''(function(){
-      var api={clients:'/admin/clients',accounts:'/admin/accounts',tokens:'/admin/tokens'};
-      function $(s,el){return (el||document).querySelector(s);}
-      function j(u,o){o=o||{};o.credentials='include';return fetch(u,o).then(function(r){if(!r.ok)return r.text().then(function(t){throw new Error('HTTP '+r.status+' '+r.statusText+' on '+u+'\\n'+t);});var ct=(r.headers.get('content-type')||'');return ct.indexOf('application/json')>=0?r.json():r.text();});}
-      var root=document.getElementById('app');
-      root.innerHTML='<main class="main"><div class="bar"><div style="display:flex;gap:8px;align-items:center"><div class="crumb">Gestione Clienti</div><span id="hint" class="hint"></span></div><div class="group"><a href="/ui2"><button>Torna a UI2</button></a></div></div><div class="content">'
-      +'<div class="card"><div class="title">Nuovo cliente</div><div class="row"><input id="new-name" placeholder="Nome"></div><div class="row"><input id="new-email" placeholder="Email (opzionale)"></div><div class="row"><button id="btn-create" class="primary">Crea</button></div></div>'
-      +'<div class="card"><div class="title">Elimina cliente</div><div class="row"><input id="del-id" placeholder="ID cliente"></div><div class="row"><button id="btn-del" class="danger">Elimina</button></div><div class="hint">Operazione definitiva.</div></div>'
-      +'<div class="card"><div class="title">Collega Instagram (opzionale)</div><div class="row"><input id="ig-id" placeholder="ig_user_id (es. 1784…)"></div><div class="row"><input id="ig-username" placeholder="username (senza @)"></div><div class="row"><input id="ig-client" placeholder="client_id (ID cliente)"></div><div class="row"><label class="kv"><input id="ig-active" type="checkbox" checked> active</label><label class="kv"><input id="ig-bot" type="checkbox" checked> bot_enabled</label></div><div class="row"><button id="btn-link-ig">Collega/aggiorna</button></div></div>'
-      +'<div class="card"><div class="title">Token Instagram (opzionale)</div><div class="row"><input id="tok-ig" placeholder="ig_user_id (per associazione)"></div><div class="row"><textarea id="tok-value" rows="4" placeholder="Access token lungo…"></textarea></div><div class="row"><label class="kv"><input id="tok-long" type="checkbox" checked> long_lived</label></div><div class="row"><button id="btn-token">Salva token</button></div><div class="hint">Se POST /admin/tokens non è supportato in questa build, vedrai un errore.</div></div>'
-      +'</div></main>';
-      function flash(msg){var h=$('#hint'),old=h.textContent;h.textContent=msg;setTimeout(function(){h.textContent=old;},1400);}
-      document.getElementById('btn-create').addEventListener('click',function(){
-        var name=$('#new-name').value.trim(),email=$('#new-email').value.trim();
-        if(!name){alert('Inserisci un nome');return;}
-        j(api.clients,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(email?{name:name,email:email}:{name:name})})
-        .then(function(){flash('Cliente creato');$('#new-name').value='';$('#new-email').value='';})
-        .catch(function(e){alert('Errore creazione:\\n'+e.message);});
-      });
-      document.getElementById('btn-del').addEventListener('click',function(){
-        var id=($('#del-id').value||'').trim();if(!id){alert('Inserisci ID');return;}
-        if(!confirm('Eliminare definitivamente il cliente ID '+id+'?'))return;
-        j(api.clients+'/'+encodeURIComponent(id),{method:'DELETE'})
-          .catch(function(){return j(api.clients,{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:Number(id)})});})
-          .then(function(){flash('Cliente eliminato');$('#del-id').value='';})
-          .catch(function(e){alert('Errore eliminazione:\\n'+e.message);});
-      });
-      document.getElementById('btn-link-ig').addEventListener('click',function(){
-        var ig=$('#ig-id').value.trim(),user=$('#ig-username').value.trim(),cid=$('#ig-client').value.trim();
-        var active=$('#ig-active').checked,bot=$('#ig-bot').checked;
-        if(!ig||!user||!cid){alert('Compila ig_user_id, username e client_id');return;}
-        j(api.accounts+'/'+encodeURIComponent(ig),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({client_id:Number(cid),username:user,active:active,bot_enabled:bot})})
-        .catch(function(){return j(api.accounts,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ig_user_id:ig,username:user,client_id:Number(cid),active:active,bot_enabled:bot})});})
-        .then(function(){flash('Account IG aggiornato/creato');})
-        .catch(function(e){alert('Errore IG:\\n'+e.message);});
-      });
-      document.getElementById('btn-token').addEventListener('click',function(){
-        var ig=$('#tok-ig').value.trim(),tok=$('#tok-value').value.trim(),long=$('#tok-long').checked;
-        if(!ig||!tok){alert('Compila ig_user_id e token');return;}
-        j(api.tokens,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ig_user_id:ig,access_token:tok,long_lived:long})})
-        .then(function(){flash('Token salvato');$('#tok-value').value='';})
-        .catch(function(e){alert('Errore token:\\n'+e.message);});
-      });
-    })();'''
-    return Response(JS, media_type="application/javascript")
+except Exception as e:
+    print("Admin UI router non caricato:", e)
