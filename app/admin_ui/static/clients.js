@@ -1,77 +1,177 @@
-const BASIC = 'Basic ' + btoa('admin:' + prompt('Password admin:',''));
-const listEl = document.getElementById('list');
-
-async function fetchClients() {
-  const r = await fetch('/admin/clients_list', { headers: { Authorization: BASIC }});
-  if (!r.ok) throw new Error('Errore caricamento: ' + r.status);
-  return r.json();
+// Helper: toast
+function showToast(msg, ok = true) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast ' + (ok ? 'ok' : 'err');
+  t.style.display = 'block';
+  setTimeout(() => (t.style.display = 'none'), 3000);
 }
 
-function render(items) {
-  const rows = items.map(it => `
-    <tr>
-      <td>${it.id}</td>
-      <td><a href="/ui/clients/${it.id}">${escapeHtml(it.name)}</a><br><small class="muted">${escapeHtml(it.email||'')}</small></td>
-      <td style="text-align:center">${it.ig_accounts}</td>
-      <td style="text-align:center">${it.public_spaces}</td>
-    </tr>
-  `).join('');
-  listEl.innerHTML = `
-    <table role="grid">
-      <thead><tr><th>ID</th><th>Cliente</th><th>IG</th><th>Spazi</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>`;
+// Helper: modali
+function openModal(id) {
+  const el = document.getElementById(id);
+  if (el) el.setAttribute('aria-hidden', 'false');
+}
+function closeModal(id) {
+  const el = document.getElementById(id);
+  if (el) el.setAttribute('aria-hidden', 'true');
+}
+document.addEventListener('click', (e) => {
+  if (e.target.matches('[data-close]')) {
+    const modal = e.target.closest('.modal');
+    if (modal) modal.setAttribute('aria-hidden', 'true');
+  }
+});
+
+// Stato locale
+let CLIENTS = [];
+let DEL_ID = null;
+
+// Render tabella
+function renderTable(filter = '') {
+  const tbody = document.getElementById('clientsTbody');
+  const empty = document.getElementById('emptyState');
+  tbody.innerHTML = '';
+
+  const q = filter.trim().toLowerCase();
+  const data = CLIENTS.filter(c => {
+    if (!q) return true;
+    return (String(c.id).includes(q) ||
+      (c.name || '').toLowerCase().includes(q) ||
+      (c.email || '').toLowerCase().includes(q));
+  });
+
+  if (data.length === 0) {
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+
+  for (const c of data) {
+    const tr = document.createElement('tr');
+
+    const created = c.created_at ? new Date(c.created_at).toLocaleString() : '-';
+
+    tr.innerHTML = `
+      <td>${c.id}</td>
+      <td>${escapeHtml(c.name || '')}</td>
+      <td>${escapeHtml(c.email || '')}</td>
+      <td>${created}</td>
+      <td style="text-align:right;">
+        <div class="btn-group">
+          <a class="btn small" href="/ui2/client/${c.id}">Gestione</a>
+          <a class="btn small" href="/ui2/prompts/${c.id}">Prompt</a>
+          <button class="btn small danger" data-del="${c.id}" data-name="${escapeHtml(c.name || '')}">Elimina</button>
+        </div>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  }
 }
 
-function escapeHtml(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+// Escape semplice per XSS
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+}
 
-(async function init(){
-  try{
-    const data = await fetchClients();
-    render(data.items||[]);
-  }catch(e){
-    listEl.innerHTML = '<mark>'+String(e)+'</mark>';
+// Fetch lista
+async function loadClients() {
+  try {
+    const res = await fetch('/admin/clients');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    CLIENTS = await res.json();
+    renderTable(document.getElementById('searchInput').value || '');
+  } catch (e) {
+    console.error(e);
+    showToast('Errore nel caricare i clienti', false);
   }
-})();
+}
 
+// Crea cliente
+async function createClient(payload) {
+  const res = await fetch('/admin/clients', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const msg = (await safeJson(res))?.detail || 'Errore creazione';
+    throw new Error(msg);
+  }
+  return res.json();
+}
 
-;(() => {
-  const ta = document.getElementById('ai_prompt');
-  const statusEl = document.getElementById('ai-prompt-status');
-  if (!ta) return;
+// Elimina cliente
+async function deleteClient(id) {
+  const res = await fetch(`/admin/clients/${id}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const msg = (await safeJson(res))?.detail || 'Errore eliminazione';
+    throw new Error(msg);
+  }
+  return true;
+}
 
-  async function loadClientAI() {
-    try {
-      statusEl && (statusEl.textContent = 'Caricamento...');
-      const res = await fetch(`/api/clients/${window.CURRENT_CLIENT_ID}`, { credentials: 'include' });
-      if (!res.ok) throw new Error('GET /api/clients/:id failed');
-      const data = await res.json();
-      ta.value = data.ai_prompt || '';
-      statusEl && (statusEl.textContent = 'Pronto');
-    } catch (e) {
-      statusEl && (statusEl.textContent = 'Errore caricamento');
-      console.error(e);
+async function safeJson(res) {
+  try { return await res.json(); } catch { return null; }
+}
+
+// Event wiring
+document.addEventListener('DOMContentLoaded', () => {
+  loadClients();
+
+  // Cerca
+  const search = document.getElementById('searchInput');
+  search.addEventListener('input', () => renderTable(search.value));
+
+  // Nuovo
+  document.getElementById('btnNew').addEventListener('click', () => {
+    const form = document.getElementById('formNewClient');
+    form.reset();
+    openModal('modalNew');
+  });
+
+  // Submit nuovo
+  document.getElementById('formNewClient').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const name = (fd.get('name') || '').toString().trim();
+    const email = (fd.get('email') || '').toString().trim() || null;
+    if (!name) {
+      showToast('Il nome è obbligatorio', false);
+      return;
     }
-  }
-
-  async function saveClientAI() {
     try {
-      statusEl && (statusEl.textContent = 'Salvataggio...');
-      const res = await fetch(`/api/clients/${window.CURRENT_CLIENT_ID}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ ai_prompt: ta.value })
-      });
-      if (!res.ok) throw new Error('PATCH /api/clients/:id failed');
-      statusEl && (statusEl.textContent = 'Salvato');
-      setTimeout(() => { if(statusEl) statusEl.textContent=''; }, 1200);
-    } catch (e) {
-      statusEl && (statusEl.textContent = 'Errore salvataggio');
-      console.error(e);
+      await createClient({ name, email });
+      closeModal('modalNew');
+      showToast('Cliente creato');
+      await loadClients();
+    } catch (err) {
+      showToast(err.message, false);
     }
-  }
+  });
 
-  document.getElementById('btn-save-ai-prompt')?.addEventListener('click', saveClientAI);
-  loadClientAI();
-})();
+  // Click su elimina
+  document.getElementById('clientsTbody').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-del]');
+    if (!btn) return;
+    DEL_ID = btn.getAttribute('data-del');
+    const nm = btn.getAttribute('data-name') || '';
+    document.getElementById('delName').textContent = nm;
+    openModal('modalDel');
+  });
+
+  // Conferma elimina
+  document.getElementById('btnConfirmDel').addEventListener('click', async () => {
+    if (!DEL_ID) return;
+    try {
+      await deleteClient(DEL_ID);
+      closeModal('modalDel');
+      showToast('Cliente eliminato');
+      await loadClients();
+    } catch (err) {
+      showToast(err.message, false);
+    } finally {
+      DEL_ID = null;
+    }
+  });
+});

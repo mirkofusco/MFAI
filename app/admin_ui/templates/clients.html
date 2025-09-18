@@ -1,125 +1,80 @@
 {% extends "base.html" %}
-{% block title %}{{ page_title }}{% endblock %}
+{% block title %}Clienti · Admin{% endblock %}
 
 {% block content %}
-<h1>Clienti</h1>
+<div class="page-header">
+  <h1>Clienti</h1>
+  <div class="actions">
+    <input id="searchInput" type="text" placeholder="Cerca per nome o email…" class="input" />
+    <button id="btnNew" class="btn primary">+ Nuovo cliente</button>
+  </div>
+</div>
 
-{% if ok == 'created' %}
-  <div class="alert success">Cliente creato correttamente.</div>
-{% elif ok == 'deleted' %}
-  <div class="alert success">Cliente eliminato correttamente.</div>
-{% elif ok == 'account_updated' %}
-  <div class="alert success">Account aggiornato.</div>
-{% elif ok == 'token_refreshed' %}
-  <div class="alert success">Token aggiornato.</div>
-{% endif %}
-
-{% if err == 'invalid_input' %}
-  <div class="alert error">Compila i campi obbligatori (API Key minimo 8 caratteri).</div>
-{% elif err == 'duplicate_username' %}
-  <div class="alert error">Instagram username già presente.</div>
-{% elif err == 'not_found' %}
-  <div class="alert error">Cliente non trovato.</div>
-{% elif err == 'account_not_found' %}
-  <div class="alert error">Account non trovato.</div>
-{% elif err == 'missing_token' %}
-  <div class="alert error">Token mancante o troppo corto.</div>
-{% elif err == 'api_key_invalid' %}
-  <div class="alert error">API key non valida lato server.</div>
-{% elif err == 'token_refresh_failed' %}
-  <div class="alert error">Aggiornamento token fallito.</div>
-{% elif err %}
-  <div class="alert error">Errore: {{ err }}</div>
-{% endif %}
-
-<section class="card">
-  <h2>Nuovo cliente</h2>
-  <form id="create" method="post" action="/ui2/clients/create">
-    <div class="grid">
-      <div>
-        <label>Nome</label>
-        <input type="text" name="name" placeholder="Azienda Srl" required>
-      </div>
-      <div>
-        <label>Instagram Username</label>
-        <input type="text" name="instagram_username" placeholder="azienda.ig" required>
-      </div>
-      <div>
-        <label>API Key</label>
-        <input type="text" name="api_key" placeholder="min 8 caratteri" required>
-      </div>
-      <div class="checkbox">
-        <label>Attivo</label>
-        <input type="checkbox" name="active" checked>
-      </div>
-    </div>
-    <div>
-      <label>AI Prompt (opzionale)</label>
-      <input type="text" name="ai_prompt" placeholder="Istruzioni per il bot del cliente">
-    </div>
-    <div>
-      <button type="submit">Aggiungi</button>
-    </div>
-  </form>
-</section>
-
-<section class="card" style="margin-top:24px;">
-  <h2>Elenco clienti</h2>
+<div class="card">
   <table class="table">
     <thead>
       <tr>
-        <th style="width:64px;">ID</th>
+        <th style="width:60px;">ID</th>
         <th>Nome</th>
-        <th>Instagram</th>
-        <th style="width:120px;">Stato</th>
-        <th>Prompt</th>
-        <th style="width:140px;">Azioni</th>
+        <th>Email</th>
+        <th style="width:180px;">Creato il</th>
+        <th style="width:240px; text-align:right;">Azioni</th>
       </tr>
     </thead>
-    <tbody>
-      {% if items and items|length > 0 %}
-        {% for c in items %}
-          <tr>
-            <td>{{ c.id }}</td>
-            <td>{{ c.name }}</td>
-            <td>@{{ c.instagram_username }}</td>
-            <td>
-              {% if c.active %}
-                <span class="badge on">attivo</span>
-              {% else %}
-                <span class="badge off">spento</span>
-              {% endif %}
-            </td>
-            <td>{{ c.ai_prompt or '—' }}</td>
-            <td>
-              <form method="post" action="/ui2/clients/delete" onsubmit="return confirm('Eliminare il cliente #{{ c.id }}?');">
-                <input type="hidden" name="client_id" value="{{ c.id }}">
-                <button type="submit" class="danger">Elimina</button>
-              </form>
-            </td>
-          </tr>
-        {% endfor %}
-      {% else %}
-        <tr><td colspan="6"><span class="muted">Nessun cliente presente.</span></td></tr>
-      {% endif %}
+    <tbody id="clientsTbody">
+      <!-- righe generate da JS -->
     </tbody>
   </table>
-</section>
+  <div id="emptyState" class="empty" style="display:none;">
+    Nessun cliente trovato.
+  </div>
+</div>
 
-<style>
-  .alert{padding:10px 12px;border-radius:8px;margin:8px 0;}
-  .success{background:#e8f5e9;}
-  .error{background:#ffebee;}
-  .card{background:#fff;border:1px solid #eee;border-radius:12px;padding:16px;}
-  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
-  .checkbox{display:flex;flex-direction:column;gap:6px;}
-  .table{width:100%;border-collapse:collapse;}
-  .table th,.table td{border-bottom:1px solid #eee;padding:10px;text-align:left;vertical-align:top;}
-  .badge{padding:2px 8px;border-radius:12px;font-size:12px;}
-  .on{background:#e8f5e9;}
-  .off{background:#fff3e0;}
-  .muted{color:#777;font-size:12px;}
-  button{padding:8px 12px;border-radius:8px;border:1px solid #ddd;background:#fafafa;cursor:pointer}
-  button.danger{background:#fdecea;border-color:#f5c6cb}
-</style>
+<!-- Modale: nuovo cliente -->
+<div id="modalNew" class="modal" aria-hidden="true">
+  <div class="modal-backdrop" data-close></div>
+  <div class="modal-dialog">
+    <div class="modal-header">
+      <h2>Nuovo cliente</h2>
+      <button class="icon-btn" data-close>&times;</button>
+    </div>
+    <div class="modal-body">
+      <form id="formNewClient">
+        <label class="label">Nome</label>
+        <input name="name" class="input" placeholder="Es. Demo Srl" required />
+        <label class="label">Email (facoltativa)</label>
+        <input name="email" type="email" class="input" placeholder="esempio@dominio.it" />
+        <div class="modal-actions">
+          <button type="button" class="btn" data-close>Annulla</button>
+          <button type="submit" class="btn primary">Crea</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Modale: conferma elimina -->
+<div id="modalDel" class="modal" aria-hidden="true">
+  <div class="modal-backdrop" data-close></div>
+  <div class="modal-dialog">
+    <div class="modal-header">
+      <h2>Elimina cliente</h2>
+      <button class="icon-btn" data-close>&times;</button>
+    </div>
+    <div class="modal-body">
+      <p>Sei sicuro di voler eliminare <b id="delName"></b>? L’operazione non è reversibile.</p>
+      <div class="modal-actions">
+        <button type="button" class="btn" data-close>Annulla</button>
+        <button id="btnConfirmDel" type="button" class="btn danger">Elimina</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast" class="toast" role="status" aria-live="polite" style="display:none;"></div>
+
+<script src="/admin/static/clients.js"></script>
 {% endblock %}
+<script src="/ui2/static/clients.js"></script>
+

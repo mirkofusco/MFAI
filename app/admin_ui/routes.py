@@ -83,6 +83,20 @@ async def home(
             "home.html",
             {"request": request, "page_title": "MF.AI — Admin UI", "ok": ok, "err": err, "items": items},
         )
+    # ------------------------------------------------------------
+# Pagina Clienti: /ui2/clients
+# ------------------------------------------------------------
+@router.get("/clients", response_class=HTMLResponse)
+async def clients_page(
+    request: Request,
+    _: bool = Depends(require_admin),
+) -> HTMLResponse:
+    # La pagina è client-side driven: il JS chiama /admin/clients
+    return templates.TemplateResponse(
+        "clients.html",
+        {"request": request, "page_title": "Clienti · Admin"}
+    )
+
 
     # Se vuoi una lista clienti nel pannello (sidebar, widget, ecc.)
     async with engine.begin() as conn:

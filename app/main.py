@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from app.db import engine  # engine async verso Neon
+app.mount("/ui2/static", StaticFiles(directory="app/admin_ui/static"), name="ui2_static")
 
 APP_NAME = "MF.AI"
 app = FastAPI(title=APP_NAME)
