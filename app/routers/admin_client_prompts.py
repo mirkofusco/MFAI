@@ -20,3 +20,7 @@ async def put_client_prompt(client_id: int, key: str, body: PromptUpdate):
         return {"ok": True, "key": saved}
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+@router.get("/_debug")
+async def _client_prompts_debug():
+    return {"ok": True, "router": "admin_client_prompts"}
