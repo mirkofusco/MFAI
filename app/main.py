@@ -14,10 +14,12 @@ from fastapi.templating import Jinja2Templates
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 from sqlalchemy import text
-from app.routers.admin_client_prompts import router as client_prompts_router
 
-# --- DB engine async (Neon/altro) ---
-from app.db import engine  # engine async
+from app.db import engine  # async engine
+from app.security_admin import verify_admin
+from app.services.client_prompts import list_prompts_for_client, upsert_prompt_for_client
+# (se usi anche il router separato, importa e includilo dopo)
+# from app.routers.admin_client_prompts import router as client_prompts_router
 
 # -----------------------------
 # CREA L'APP PRIMA DI TUTTO
@@ -26,12 +28,33 @@ APP_NAME = "MF.AI"
 app = FastAPI(title=APP_NAME)
 
 # -----------------------------
+# (opzionale) monta il router separato
+# -----------------------------
+# app.include_router(client_prompts_router)
+
+# === Client Prompts (inline) =========================================
+class _PromptUpdate(BaseModel):
+    value: str = Field(..., min_length=1, max_length=5000)
+
+@app.get("/admin/client/{client_id}/prompts", dependencies=[Depends(verify_admin)])
+async def _get_client_prompts(client_id: int):
+    data = await list_prompts_for_client(client_id)
+    return [{"key": k, "value": v} for k, v in sorted(data.items())]
+
+@app.put("/admin/client/{client_id}/prompts/{key}", dependencies=[Depends(verify_admin)])
+async def _put_client_prompt(client_id: int, key: str, body: _PromptUpdate):
+    try:
+        saved = await upsert_prompt_for_client(client_id, key, body.value)
+        return {"ok": True, "key": saved}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+# =====================================================================
+
+# -----------------------------
 # MOUNT STATIC (subito dopo app)
 # -----------------------------
-# Static della UI2 (JS/CSS locali sotto app/admin_ui/static)
 if os.path.isdir("app/admin_ui/static"):
     app.mount("/ui2/static", StaticFiles(directory="app/admin_ui/static"), name="ui2_static")
-    # opzionale mirror su /static (non obbligatorio, utile se template legacy puntano qui)
     app.mount("/static", StaticFiles(directory="app/admin_ui/static"), name="static")
 
 # -----------------------------------------------------------
@@ -48,6 +71,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # -----------------------------------------------------------
 # Security headers (CSP)
