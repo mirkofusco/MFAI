@@ -14,6 +14,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 from sqlalchemy import text
+from app.routers.admin_client_prompts import router as client_prompts_router
 
 # --- DB engine async (Neon/altro) ---
 from app.db import engine  # engine async
