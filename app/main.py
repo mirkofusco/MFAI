@@ -889,3 +889,13 @@ try:
     app.include_router(admin_ui_router)
 except Exception as e:
     print("Admin UI router non caricato:", e)
+
+@app.get("/__debug")
+def __debug():
+    import os
+    return {
+        "ok": True,
+        "file": __file__,
+        "repo_hint": "MFAI",
+        "koyeb_commit": os.getenv("KOYEB_GIT_COMMIT", "local")
+    }
