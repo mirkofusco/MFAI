@@ -899,3 +899,7 @@ def __debug():
         "repo_hint": "MFAI",
         "koyeb_commit": os.getenv("KOYEB_GIT_COMMIT", "local")
     }
+
+@app.get("/__routes")
+def __routes():
+    return {"routes":[getattr(r, "path", None) for r in app.routes]}
