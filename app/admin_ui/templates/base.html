@@ -4,20 +4,38 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>{{ page_title or "MF.AI — Admin" }}</title>
+
+  <!-- Bootstrap + stile comune -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
   <link href="/static/css/app.css" rel="stylesheet" />
-  <!-- Asset UI2 per modale -->
-  <link href="/ui2/static/ui2.css" rel="stylesheet" />
-  <script defer src="/ui2/static/ui2.js"></script>
+
+  <!-- Stili MINIMI per il popup, isolati con prefisso mfai- -->
+  <style>
+    #mfai-add-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1050;display:none;}
+    #mfai-add-modal{position:fixed;inset:0;display:none;z-index:1060;align-items:center;justify-content:center;}
+    .mfai-card{width:96%;max-width:560px;background:#101218;color:#e8eaef;border:1px solid #282d38;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.6);}
+    .mfai-hd{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #282d38;}
+    .mfai-ttl{margin:0;font-size:16px;font-weight:600;}
+    .mfai-x{background:#1a1f2b;border:1px solid #2e3544;border-radius:50%;width:28px;height:28px;color:#cfd5df;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;}
+    .mfai-bd{padding:16px;}
+    .mfai-ft{display:flex;gap:8px;justify-content:flex-end;padding:0 16px 16px;}
+    .mfai-row{display:grid;gap:6px;margin-bottom:12px;}
+    .mfai-inp,.mfai-txa{background:#0c0f15;border:1px solid #2b3240;color:#e8eaef;padding:10px;border-radius:8px;outline:none;width:100%;}
+    .mfai-inp:focus,.mfai-txa:focus{border-color:#4c8bf5;box-shadow:0 0 0 2px rgba(76,139,245,.25);}
+    .mfai-btn{padding:8px 12px;border-radius:8px;background:#1c2230;color:#e8eaef;border:1px solid #2e3544;cursor:pointer}
+    .mfai-btn:hover{background:#232b3b}
+    .mfai-btn-primary{background:#4c8bf5;border-color:#3c74cc;color:#fff}
+    .mfai-btn-primary:hover{background:#3c74cc}
+  </style>
 </head>
 <body class="bg-light">
   <nav class="navbar navbar-dark bg-dark">
     <div class="container-fluid">
       <a class="navbar-brand fw-semibold" href="/ui2">MF.AI Admin</a>
-      <div class="d-flex gap-2">
+      <div class="d-flex align-items-center gap-2">
         <a class="nav-link d-inline-block text-white-50" href="/ui2">Dashboard</a>
-        <!-- Bottone globale per aprire la modale "Aggiungi cliente" -->
-        <button class="btn btn-primary btn-sm" id="btn-open-add-client">+ Aggiungi cliente</button>
+        <!-- 👉 Bottone per aprire il popup -->
+        <button id="mfai-open-add" class="btn btn-primary btn-sm">+ Aggiungi cliente</button>
       </div>
     </div>
   </nav>
@@ -26,42 +44,89 @@
     {% block content %}{% endblock %}
   </main>
 
-  <!-- Modale Aggiungi cliente (globale) -->
-  <div class="modal" id="add-client-modal" aria-hidden="true">
-    <div class="modal__dialog">
-      <div class="modal__header">
-        <h3 class="modal__title">Aggiungi cliente</h3>
-        <button class="modal__close" id="btn-close-add-client" aria-label="Chiudi">×</button>
+  <!-- 👉 Backdrop + Popup centrato -->
+  <div id="mfai-add-backdrop" aria-hidden="true"></div>
+  <div id="mfai-add-modal" aria-hidden="true">
+    <div class="mfai-card">
+      <div class="mfai-hd">
+        <h3 class="mfai-ttl">Aggiungi cliente</h3>
+        <button class="mfai-x" id="mfai-close-add" aria-label="Chiudi">×</button>
       </div>
-      <div class="modal__body">
-        <form id="add-client-form" action="/ui2/clients/create" method="post">
-          <div class="form-row">
-            <label>Nome *</label>
-            <input type="text" name="name" required>
+      <div class="mfai-bd">
+        <form id="mfai-add-form" action="/ui2/clients/create" method="post" autocomplete="off">
+          <div class="mfai-row">
+            <label class="form-label mb-0">Nome *</label>
+            <input class="mfai-inp" type="text" name="name" required>
           </div>
-          <div class="form-row">
-            <label>Instagram username *</label>
-            <input type="text" name="instagram_username" placeholder="@cliente" required>
+          <div class="mfai-row">
+            <label class="form-label mb-0">Instagram username *</label>
+            <input class="mfai-inp" type="text" name="instagram_username" placeholder="@cliente" required>
           </div>
-          <div class="form-row">
-            <label>API Key *</label>
-            <input type="text" name="api_key" minlength="8" required>
+          <div class="mfai-row">
+            <label class="form-label mb-0">API Key *</label>
+            <input class="mfai-inp" type="text" name="api_key" minlength="8" required>
           </div>
-          <div class="form-row">
-            <label>AI Prompt (opzionale)</label>
-            <textarea name="ai_prompt" rows="3" placeholder="Prompt personalizzato..."></textarea>
+          <div class="mfai-row">
+            <label class="form-label mb-0">AI Prompt (opzionale)</label>
+            <textarea class="mfai-txa" name="ai_prompt" rows="3" placeholder="Prompt personalizzato..."></textarea>
           </div>
-          <div class="form-row">
-            <label class="checkbox"><input type="checkbox" name="active"> Attivo</label>
+          <div class="mfai-row">
+            <label class="form-check-label">
+              <input class="form-check-input me-2" type="checkbox" name="active"> Attivo
+            </label>
           </div>
-          <div class="modal__footer">
-            <button type="button" class="btn" id="btn-cancel-add-client">Annulla</button>
-            <button type="submit" class="btn btn-primary">Crea</button>
+          <div class="mfai-ft">
+            <button type="button" class="mfai-btn" id="mfai-cancel-add">Annulla</button>
+            <button type="submit" class="mfai-btn mfai-btn-primary">Crea</button>
           </div>
         </form>
       </div>
     </div>
   </div>
-  <div class="modal__backdrop" id="add-client-backdrop" aria-hidden="true"></div>
+
+  <!-- 👉 JS: apri/chiudi popup + validazione -->
+  <script>
+    (function () {
+      var openBtn   = document.getElementById('mfai-open-add');
+      var modal     = document.getElementById('mfai-add-modal');
+      var backdrop  = document.getElementById('mfai-add-backdrop');
+      var closeBtn  = document.getElementById('mfai-close-add');
+      var cancelBtn = document.getElementById('mfai-cancel-add');
+      var form      = document.getElementById('mfai-add-form');
+
+      function show(open){
+        if(open){
+          modal.style.display='flex';
+          backdrop.style.display='block';
+          modal.setAttribute('aria-hidden','false');
+          var first = modal.querySelector('input[name="name"]');
+          if(first){ try{ first.focus(); }catch(e){} }
+        }else{
+          modal.style.display='none';
+          backdrop.style.display='none';
+          modal.setAttribute('aria-hidden','true');
+        }
+      }
+
+      if(openBtn)  openBtn.addEventListener('click', function(){ show(true); });
+      if(closeBtn) closeBtn.addEventListener('click', function(){ show(false); });
+      if(cancelBtn)cancelBtn.addEventListener('click', function(){ show(false); });
+      if(backdrop) backdrop.addEventListener('click', function(){ show(false); });
+      document.addEventListener('keydown', function(e){ if(e.key==='Escape'){ show(false); } });
+
+      // Validazione minima lato client
+      if(form){
+        form.addEventListener('submit', function(e){
+          var name = (form.querySelector('input[name="name"]')||{}).value||'';
+          var ig   = (form.querySelector('input[name="instagram_username"]')||{}).value||'';
+          var api  = (form.querySelector('input[name="api_key"]')||{}).value||'';
+          if(!name.trim() || !ig.trim() || !api.trim() || api.trim().length<8){
+            e.preventDefault();
+            alert('Compila Nome, Username IG e API Key (min 8 caratteri).');
+          }
+        });
+      }
+    })();
+  </script>
 </body>
 </html>
