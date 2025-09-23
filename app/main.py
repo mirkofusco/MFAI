@@ -31,18 +31,36 @@ if os.path.isdir("app/admin_ui/static"):
     app.mount("/ui2/static", StaticFiles(directory="app/admin_ui/static"), name="ui2_static")
     
     # === UI2: injection middleware (aggiunge bottone + modale senza toccare i template) ===
-    # === UI2: injection middleware (aggiunge bottone + modale senza toccare i template) ===
+# === UI2: injection middleware (CSS+JS inline, zero dipendenze esterne) ===
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
 UI2_HEAD_INJECT = """
-<link href="/ui2/static/ui2.css" rel="stylesheet" />
-<script defer src="/ui2/static/ui2.js"></script>
+<style>
+/* Inline CSS minimale per il modale */
+#add-client-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9998;display:none}
+#add-client-modal{position:fixed;inset:0;display:none;place-items:center;z-index:9999}
+#add-client-modal .modal__dialog{width:96%;max-width:560px;background:#121212;color:#eee;border:1px solid #2a2a2a;border-radius:12px;overflow:hidden;box-shadow:0 10px 30px rgba(0,0,0,.6)}
+#add-client-modal .modal__header{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid #2a2a2a}
+#add-client-modal .modal__title{margin:0;font-size:16px}
+#add-client-modal .modal__close{background:transparent;border:0;color:#aaa;font-size:20px;cursor:pointer}
+#add-client-modal .modal__body{padding:16px}
+#add-client-modal .modal__footer{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
+#add-client-modal .form-row{display:grid;gap:6px;margin-bottom:12px}
+#add-client-modal input,#add-client-modal textarea{background:#0d0d0d;border:1px solid #333;color:#eee;padding:8px;border-radius:8px}
+#add-client-modal input:focus,#add-client-modal textarea:focus{outline:none;border-color:#4c8bf5}
+.btn{padding:8px 12px;border-radius:8px;background:#222;color:#eee;border:1px solid #444;cursor:pointer}
+.btn:hover{background:#2a2a2a}
+.btn-primary{background:#4c8bf5;border-color:#3c74cc;color:#fff}
+.btn-primary:hover{background:#3c74cc}
+#btn-open-add-client{position:fixed;right:16px;bottom:16px;z-index:10000}
+</style>
 """.strip()
 
 UI2_BODY_INJECT = """
-<!-- UI2 INJECT: Add Client Modal + Button -->
-<div class="modal" id="add-client-modal" aria-hidden="true" style="display:none;">
+<!-- UI2 INJECT -->
+<div id="add-client-backdrop" aria-hidden="true"></div>
+<div class="modal" id="add-client-modal" aria-hidden="true">
   <div class="modal__dialog">
     <div class="modal__header">
       <h3 class="modal__title">Aggiungi cliente</h3>
@@ -77,12 +95,60 @@ UI2_BODY_INJECT = """
     </div>
   </div>
 </div>
-<div class="modal__backdrop" id="add-client-backdrop" aria-hidden="true" style="display:none;"></div>
 
-<!-- Floating button (fallback) -->
-<button class="btn btn-primary" id="btn-open-add-client" style="position:fixed;right:16px;bottom:16px;z-index:10000;">
-  + Aggiungi cliente
-</button>
+<button class="btn btn-primary" id="btn-open-add-client">+ Aggiungi cliente</button>
+
+<script>
+(function () {
+  var modal = document.getElementById('add-client-modal');
+  var backdrop = document.getElementById('add-client-backdrop');
+  var form = document.getElementById('add-client-form');
+  var openBtn = document.getElementById('btn-open-add-client');
+  var closeBtn = document.getElementById('btn-close-add-client');
+  var cancelBtn = document.getElementById('btn-cancel-add-client');
+
+  if (!modal || !backdrop) return;
+
+  function show(open) {
+    if (open) {
+      modal.style.display = 'grid';
+      backdrop.style.display = 'block';
+      modal.setAttribute('aria-hidden', 'false');
+      var first = modal.querySelector('input[name="name"]');
+      if (first) { try { first.focus(); } catch(e){} }
+    } else {
+      modal.style.display = 'none';
+      backdrop.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+    }
+  }
+
+  if (openBtn) openBtn.addEventListener('click', function(){ show(true); });
+  if (closeBtn) closeBtn.addEventListener('click', function(){ show(false); });
+  if (cancelBtn) cancelBtn.addEventListener('click', function(){ show(false); });
+  if (backdrop) backdrop.addEventListener('click', function(){ show(false); });
+  document.addEventListener('keydown', function(e){ if (e.key === 'Escape') show(false); });
+
+  if (form) {
+    form.addEventListener('submit', function(e){
+      var nameEl = form.querySelector('input[name="name"]');
+      var igEl = form.querySelector('input[name="instagram_username"]');
+      var apiEl = form.querySelector('input[name="api_key"]');
+      var name = nameEl ? nameEl.value.trim() : '';
+      var ig = igEl ? igEl.value.trim() : '';
+      var api = apiEl ? apiEl.value.trim() : '';
+      if (!name || !ig || !api || api.length < 8) {
+        e.preventDefault();
+        alert('Compila Nome, Username IG e API Key (min 8 caratteri).');
+        return;
+      }
+    });
+  }
+
+  // start closed
+  show(false);
+})();
+</script>
 <!-- /UI2 INJECT -->
 """.strip()
 
@@ -94,6 +160,7 @@ class UI2InjectMiddleware(BaseHTTPMiddleware):
         if not request.url.path.startswith("/ui2") or "text/html" not in ct:
             return resp
 
+        # raccogli corpo
         body = b""
         if hasattr(resp, "body_iterator"):
             async for chunk in resp.body_iterator:
@@ -106,10 +173,15 @@ class UI2InjectMiddleware(BaseHTTPMiddleware):
         except Exception:
             return resp
 
-        if "</head>" in html and "ui2/static/ui2.css" not in html:
+        # evita doppie iniezioni usando il marker
+        already = "UI2 INJECT" in html
+
+        # inietta <style> nel <head>
+        if ("</head>" in html) and (not already):
             html = html.replace("</head>", UI2_HEAD_INJECT + "\n</head>", 1)
 
-        if "</body>" in html and 'id="add-client-modal"' not in html:
+        # inietta modale + js prima di </body>
+        if ("</body>" in html) and (not already):
             html = html.replace("</body>", UI2_BODY_INJECT + "\n</body>", 1)
 
         new_resp = Response(content=html, status_code=resp.status_code, media_type="text/html")
@@ -120,6 +192,10 @@ class UI2InjectMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(UI2InjectMiddleware)
 # === /fine injection middleware ===
+
+# === /fine injection middleware ===
+
+
 
 
 
