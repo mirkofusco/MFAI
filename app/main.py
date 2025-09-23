@@ -31,7 +31,7 @@ if os.path.isdir("app/admin_ui/static"):
     app.mount("/ui2/static", StaticFiles(directory="app/admin_ui/static"), name="ui2_static")
     
     # === UI2: injection middleware (aggiunge bottone + modale senza toccare i template) ===
-# === UI2: injection middleware (CSS+JS inline, zero dipendenze esterne) ===
+# === UI2: injection middleware (robusto: inline CSS+JS, fallback se mancano </head>/<body>) ===
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
@@ -58,7 +58,7 @@ UI2_HEAD_INJECT = """
 """.strip()
 
 UI2_BODY_INJECT = """
-<!-- UI2 INJECT -->
+<!-- UI2_ADD_CLIENT_INJECT -->
 <div id="add-client-backdrop" aria-hidden="true"></div>
 <div class="modal" id="add-client-modal" aria-hidden="true">
   <div class="modal__dialog">
@@ -149,13 +149,11 @@ UI2_BODY_INJECT = """
   show(false);
 })();
 </script>
-<!-- /UI2 INJECT -->
 """.strip()
 
 class UI2InjectMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         resp = await call_next(request)
-
         ct = resp.headers.get("content-type", "")
         if not request.url.path.startswith("/ui2") or "text/html" not in ct:
             return resp
@@ -173,24 +171,33 @@ class UI2InjectMiddleware(BaseHTTPMiddleware):
         except Exception:
             return resp
 
-        # evita doppie iniezioni usando il marker
-        already = "UI2 INJECT" in html
+        # evita doppie iniezioni
+        if "UI2_ADD_CLIENT_INJECT" in html:
+            new_resp = Response(content=html, status_code=resp.status_code, media_type="text/html")
+        else:
+            # HEAD: inserisci prima di </head> se c'è, altrimenti prepend
+            if "</head>" in html:
+                html = html.replace("</head>", UI2_HEAD_INJECT + "\n</head>", 1)
+            else:
+                html = UI2_HEAD_INJECT + "\n" + html
 
-        # inietta <style> nel <head>
-        if ("</head>" in html) and (not already):
-            html = html.replace("</head>", UI2_HEAD_INJECT + "\n</head>", 1)
+            # BODY: inserisci prima di </body> se c'è, altrimenti append
+            if "</body>" in html:
+                html = html.replace("</body>", UI2_BODY_INJECT + "\n</body>", 1)
+            else:
+                html = html + "\n" + UI2_BODY_INJECT
 
-        # inietta modale + js prima di </body>
-        if ("</body>" in html) and (not already):
-            html = html.replace("</body>", UI2_BODY_INJECT + "\n</body>", 1)
+            new_resp = Response(content=html, status_code=resp.status_code, media_type="text/html")
 
-        new_resp = Response(content=html, status_code=resp.status_code, media_type="text/html")
+        # copia header non critici
         for (k, v) in resp.headers.items():
             if k.lower() not in {"content-length", "content-type"}:
                 new_resp.headers[k] = v
         return new_resp
 
 app.add_middleware(UI2InjectMiddleware)
+# === /fine injection middleware ===
+
 # === /fine injection middleware ===
 
 # === /fine injection middleware ===
