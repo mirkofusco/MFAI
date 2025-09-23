@@ -29,6 +29,110 @@ app.include_router(ui2_routes.router)
 
 if os.path.isdir("app/admin_ui/static"):
     app.mount("/ui2/static", StaticFiles(directory="app/admin_ui/static"), name="ui2_static")
+    
+    # === UI2: injection middleware (aggiunge bottone + modale senza toccare i template) ===
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
+
+UI2_HEAD_INJECT = """
+<link href="/ui2/static/ui2.css" rel="stylesheet" />
+<script defer src="/ui2/static/ui2.js"></script>
+""".strip()
+
+UI2_BODY_INJECT = """
+<!-- UI2 INJECT: Add Client Modal + Button -->
+<div class="modal" id="add-client-modal" aria-hidden="true">
+  <div class="modal__dialog">
+    <div class="modal__header">
+      <h3 class="modal__title">Aggiungi cliente</h3>
+      <button class="modal__close" id="btn-close-add-client" aria-label="Chiudi">×</button>
+    </div>
+    <div class="modal__body">
+      <form id="add-client-form" action="/ui2/clients/create" method="post">
+        <div class="form-row">
+          <label>Nome *</label>
+          <input type="text" name="name" required>
+        </div>
+        <div class="form-row">
+          <label>Instagram username *</label>
+          <input type="text" name="instagram_username" placeholder="@cliente" required>
+        </div>
+        <div class="form-row">
+          <label>API Key *</label>
+          <input type="text" name="api_key" minlength="8" required>
+        </div>
+        <div class="form-row">
+          <label>AI Prompt (opzionale)</label>
+          <textarea name="ai_prompt" rows="3" placeholder="Prompt personalizzato..."></textarea>
+        </div>
+        <div class="form-row">
+          <label class="checkbox"><input type="checkbox" name="active"> Attivo</label>
+        </div>
+        <div class="modal__footer">
+          <button type="button" class="btn" id="btn-cancel-add-client">Annulla</button>
+          <button type="submit" class="btn btn-primary">Crea</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+<div class="modal__backdrop" id="add-client-backdrop" aria-hidden="true"></div>
+
+<!-- Floating button (fallback, nel caso il template non abbia un'area toolbar) -->
+<button class="btn btn-primary" id="btn-open-add-client" style="position:fixed;right:16px;bottom:16px;z-index:10000;">
+  + Aggiungi cliente
+</button>
+<!-- /UI2 INJECT -->
+""".strip()
+
+class UI2InjectMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        resp = await call_next(request)
+
+        # Inietta solo sulle pagine HTML sotto /ui2
+        ct = resp.headers.get("content-type", "")
+        if not request.url.path.startswith("/ui2") or "text/html" not in ct:
+            return resp
+
+        # Leggi il corpo della risposta (stream -> bytes)
+        body = b""
+        if hasattr(resp, "body_iterator"):
+            async for chunk in resp.body_iterator:
+                body += chunk
+        else:
+            body = getattr(resp, "body", b"")
+
+        try:
+            html = body.decode("utf-8", errors="ignore")
+        except Exception:
+            return resp  # non tocchiamo se non decodificabile
+
+        # Inietta asset nel <head>
+        if "</head>" in html and "ui2/static/ui2.css" not in html:
+            html = html.replace("</head>", UI2_HEAD_INJECT + "\n</head>", 1)
+
+        # Inietta modale + bottone prima di </body> (una sola volta)
+        if "</body>" in html and "id=\"add-client-modal\"" not in html:
+            html = html.replace("</body>", UI2_BODY_INJECT + "\n</body>", 1)
+
+        # Ritorna nuova Response con lo stesso status e headers base
+        new_resp = Response(
+            content=html,
+            status_code=resp.status_code,
+            media_type="text/html"
+        )
+        # Copia cookie e alcuni header utili
+        for (k, v) in resp.headers.items():
+            if k.lower() not in {"content-length", "content-type"}:
+                new_resp.headers[k] = v
+        return new_resp
+
+# Registra il middleware
+app.add_middleware(UI2InjectMiddleware)
+# === /fine injection middleware ===
+
+    
+    
 
 # === Client Prompts (inline)
 class _PromptUpdate(BaseModel):
