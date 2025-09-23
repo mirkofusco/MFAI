@@ -4,9 +4,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./dev.db").strip()
 
 def connect_args_for(url: str):
-    url = url.lower()
-    if url.startswith("postgresql+asyncpg"):
-        return {}
+    # Non passiamo 'ssl' a mano: per Postgres usa ?sslmode=require nel DSN
     return {}
 
 engine = create_async_engine(
