@@ -21,3 +21,10 @@ env_info.txt
 # --- extras ---
 *.log
 access_token.txt
+
+__pycache__/
+*.pyc
+*.pyo
+*.bak
+*.bak_*
+*.bak.*
