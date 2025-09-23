@@ -18,21 +18,19 @@ from sqlalchemy import text
 from app.db import engine  # async engine
 from app.security_admin import verify_admin
 from app.services.client_prompts import list_prompts_for_client, upsert_prompt_for_client
-# (se usi anche il router separato, importa e includilo dopo)
-# from app.routers.admin_client_prompts import router as client_prompts_router
 
-# -----------------------------
-# CREA L'APP PRIMA DI TUTTO
-# -----------------------------
+# === CREA APP
 APP_NAME = "MF.AI"
 app = FastAPI(title=APP_NAME)
 
-# -----------------------------
-# (opzionale) monta il router separato
-# -----------------------------
-# app.include_router(client_prompts_router)
+# === UI2 router + static
+from app.admin_ui import routes as ui2_routes
+app.include_router(ui2_routes.router)
 
-# === Client Prompts (inline) =========================================
+if os.path.isdir("app/admin_ui/static"):
+    app.mount("/ui2/static", StaticFiles(directory="app/admin_ui/static"), name="ui2_static")
+
+# === Client Prompts (inline)
 class _PromptUpdate(BaseModel):
     value: str = Field(..., min_length=1, max_length=5000)
 
@@ -48,18 +46,8 @@ async def _put_client_prompt(client_id: int, key: str, body: _PromptUpdate):
         return {"ok": True, "key": saved}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-# =====================================================================
 
-# -----------------------------
-# MOUNT STATIC (subito dopo app)
-# -----------------------------
-if os.path.isdir("app/admin_ui/static"):
-    app.mount("/ui2/static", StaticFiles(directory="app/admin_ui/static"), name="ui2_static")
-    app.mount("/static", StaticFiles(directory="app/admin_ui/static"), name="static")
-
-# -----------------------------------------------------------
-# CORS
-# -----------------------------------------------------------
+# === CORS
 ALLOWED_ORIGINS = [
     "https://mid-ranna-soluzionidigitaliroma-f8d1ef2a.koyeb.app",
     "https://api.soluzionidigitali.roma.it",
@@ -71,6 +59,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 
 # -----------------------------------------------------------

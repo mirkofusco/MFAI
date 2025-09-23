@@ -1,3 +1,4 @@
+# app/admin_ui/routes.py
 import os
 import secrets
 from typing import Any, Dict, List, Optional
@@ -9,6 +10,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
 
+# Engine async
 try:
     from app.db import engine
 except Exception:
@@ -63,7 +65,6 @@ async def home(
         FROM {CLIENTS_TABLE}
         ORDER BY id DESC
     """)
-
     async with engine.begin() as conn:
         res = await conn.execute(query)
         rows = res.mappings().all()

@@ -1,0 +1,18 @@
+.modal,.modal__backdrop{display:none}
+.modal[aria-hidden="false"],.modal__backdrop[aria-hidden="false"]{display:block}
+.modal__backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9998}
+.modal{position:fixed;inset:0;display:grid;place-items:center;z-index:9999}
+.modal__dialog{width:96%;max-width:560px;background:#121212;color:#eee;border:1px solid #2a2a2a;border-radius:12px;overflow:hidden;box-shadow:0 10px 30px rgba(0,0,0,.6)}
+.modal__header{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid #2a2a2a}
+.modal__title{margin:0;font-size:16px}
+.modal__close{background:transparent;border:0;color:#aaa;font-size:20px;cursor:pointer}
+.modal__body{padding:16px}
+.modal__footer{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
+.form-row{display:grid;gap:6px;margin-bottom:12px}
+.form-row input,.form-row textarea{background:#0d0d0d;border:1px solid #333;color:#eee;padding:8px;border-radius:8px}
+.form-row input:focus,.form-row textarea:focus{outline:none;border-color:#4c8bf5}
+.btn{padding:8px 12px;border-radius:8px;background:#222;color:#eee;border:1px solid #444;cursor:pointer}
+.btn:hover{background:#2a2a2a}
+.btn-primary{background:#4c8bf5;border-color:#3c74cc;color:#fff}
+.btn-primary:hover{background:#3c74cc}
+#btn-open-add-client{margin-left:8px}
