@@ -1,23 +1,18 @@
-# app/db.py
 import os
-from dotenv import load_dotenv
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.ext.asyncio import create_async_engine
 
-load_dotenv()
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./dev.db").strip()
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-
-class Base(DeclarativeBase):
-    pass
+def connect_args_for(url: str):
+    url = url.lower()
+    if url.startswith("postgresql+asyncpg"):
+        return {}
+    return {}
 
 engine = create_async_engine(
     DATABASE_URL,
+    echo=False,
+    future=True,
     pool_pre_ping=True,
-    connect_args={
-        "ssl": True,  # TLS attivo (nessun ?sslmode= nella URL)
-        "server_settings": {"search_path": "mfai_app"},  # << solo mfai_app
-    },
+    connect_args=connect_args_for(DATABASE_URL),
 )
-
-SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)

@@ -1,13 +1,3 @@
-# app/admin_ui/routes.py
-# ------------------------------------------------------------
-# Admin UI (UI2) — Dashboard unica su /ui2
-# - Basic Auth (ADMIN_USER / ADMIN_PASSWORD)
-# - /ui2  (dashboard) -> mostra lista clienti + alert ok/err
-# - POST /ui2/clients/create  -> crea cliente e torna su /ui2
-# - POST /ui2/clients/delete  -> elimina cliente e torna su /ui2
-# - (opzionali) toggle-active account IG, refresh token
-# ------------------------------------------------------------
-
 import os
 import secrets
 from typing import Any, Dict, List, Optional
@@ -19,12 +9,11 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
 
-# --- DB engine: tenta app.db, poi app.database; altrimenti None (gestito a runtime)
 try:
     from app.db import engine
 except Exception:
     try:
-        from app.database import engine  # fallback
+        from app.database import engine
     except Exception:
         engine = None
 
@@ -32,19 +21,14 @@ router = APIRouter(prefix="/ui2", tags=["Admin UI"])
 templates = Jinja2Templates(directory="app/admin_ui/templates")
 security = HTTPBasic()
 
-# --- Config da env
 ADMIN_USER = os.getenv("ADMIN_USER", "")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 ADMIN_BASE_URL = os.getenv("ADMIN_BASE_URL", "http://127.0.0.1:8000")
 ADMIN_API_KEY = os.getenv("API_KEY", "")
 
-# --- Tabelle (supporto a schema esplicito: es. "mfai_app.clients")
 CLIENTS_TABLE = os.getenv("CLIENTS_TABLE", "clients")
 ACCOUNTS_TABLE = os.getenv("ACCOUNTS_TABLE", "instagram_accounts")
 
-# ------------------------------------------------------------
-# Auth: Basic
-# ------------------------------------------------------------
 def require_admin(credentials: HTTPBasicCredentials = Depends(security)) -> bool:
     user_ok = secrets.compare_digest(credentials.username, ADMIN_USER)
     pwd_ok = secrets.compare_digest(credentials.password, ADMIN_PASSWORD)
@@ -56,18 +40,10 @@ def require_admin(credentials: HTTPBasicCredentials = Depends(security)) -> bool
         )
     return True
 
-# ------------------------------------------------------------
-# Health minimale
-# ------------------------------------------------------------
 @router.get("/ping", response_class=HTMLResponse)
 def ping(_: bool = Depends(require_admin)) -> HTMLResponse:
     return HTMLResponse("<h1>MF.AI Admin UI: OK</h1>")
 
-# ------------------------------------------------------------
-# Dashboard unica: /ui2
-# - Mostra alert ok/err
-# - Carica lista clienti in 'items' (se DB disponibile)
-# ------------------------------------------------------------
 @router.get("/", response_class=HTMLResponse)
 async def home(
     request: Request,
@@ -76,15 +52,12 @@ async def home(
     _: bool = Depends(require_admin),
 ) -> HTMLResponse:
     items: List[Dict[str, Any]] = []
-
     if engine is None:
-        # Mostra la pagina anche senza DB
         return templates.TemplateResponse(
             "home.html",
             {"request": request, "page_title": "MF.AI — Admin UI", "ok": ok, "err": err, "items": items},
         )
 
-    # Carica elenco clienti (id, name, instagram_username, active, ai_prompt)
     query = text(f"""
         SELECT id, name, instagram_username, active, ai_prompt
         FROM {CLIENTS_TABLE}
@@ -111,16 +84,12 @@ async def home(
         {"request": request, "page_title": "MF.AI — Admin UI", "ok": ok, "err": err, "items": items},
     )
 
-# ------------------------------------------------------------
-# CREATE cliente (POST) -> torna su /ui2 con ok/err
-# Campi form: name, instagram_username, api_key, (active opzionale), ai_prompt
-# ------------------------------------------------------------
 @router.post("/clients/create")
 async def ui_create_client(
     name: str = Form(...),
     instagram_username: str = Form(...),
     api_key: str = Form(...),
-    active: Optional[str] = Form(None),      # checkbox -> 'on' oppure None
+    active: Optional[str] = Form(None),
     ai_prompt: Optional[str] = Form(None),
     _: bool = Depends(require_admin),
 ):
@@ -137,7 +106,6 @@ async def ui_create_client(
         return RedirectResponse(url="/ui2?err=invalid_input", status_code=303)
 
     async with engine.begin() as conn:
-        # Unicità instagram_username
         res = await conn.execute(
             text(f"SELECT 1 FROM {CLIENTS_TABLE} WHERE instagram_username = :u LIMIT 1"),
             {"u": instagram_username},
@@ -161,10 +129,6 @@ async def ui_create_client(
 
     return RedirectResponse(url="/ui2?ok=created", status_code=303)
 
-# ------------------------------------------------------------
-# DELETE cliente (POST) -> torna su /ui2 con ok=deleted
-# Campo form: client_id (hidden)
-# ------------------------------------------------------------
 @router.post("/clients/delete")
 async def ui_delete_client(
     client_id: int = Form(...),
@@ -174,17 +138,10 @@ async def ui_delete_client(
         return RedirectResponse(url="/ui2?err=db_unavailable", status_code=303)
 
     async with engine.begin() as conn:
-        # Se NON hai ON DELETE CASCADE sulle FK, elimina prima eventuali figli:
-        # await conn.execute(text("DELETE FROM instagram_accounts WHERE client_id=:id"), {"id": client_id})
-        # await conn.execute(text("DELETE FROM tokens WHERE client_id=:id"), {"id": client_id})
-
         await conn.execute(text(f"DELETE FROM {CLIENTS_TABLE} WHERE id = :id"), {"id": client_id})
 
     return RedirectResponse(url="/ui2?ok=deleted", status_code=303)
 
-# ------------------------------------------------------------
-# Accounts — Toggle active (opzionale)
-# ------------------------------------------------------------
 @router.post("/accounts/toggle-active")
 async def toggle_active(
     ig_account_id: int = Form(...),
@@ -205,9 +162,6 @@ async def toggle_active(
 
     return RedirectResponse(url="/ui2?ok=account_updated", status_code=303)
 
-# ------------------------------------------------------------
-# Tokens — Refresh via API (opzionale)
-# ------------------------------------------------------------
 @router.post("/tokens/refresh")
 async def ui_refresh_token(
     ig_user_id: str = Form(...),
