@@ -31,6 +31,7 @@ if os.path.isdir("app/admin_ui/static"):
     app.mount("/ui2/static", StaticFiles(directory="app/admin_ui/static"), name="ui2_static")
     
     # === UI2: injection middleware (aggiunge bottone + modale senza toccare i template) ===
+    # === UI2: injection middleware (aggiunge bottone + modale senza toccare i template) ===
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
@@ -41,7 +42,7 @@ UI2_HEAD_INJECT = """
 
 UI2_BODY_INJECT = """
 <!-- UI2 INJECT: Add Client Modal + Button -->
-<div class="modal" id="add-client-modal" aria-hidden="true">
+<div class="modal" id="add-client-modal" aria-hidden="true" style="display:none;">
   <div class="modal__dialog">
     <div class="modal__header">
       <h3 class="modal__title">Aggiungi cliente</h3>
@@ -76,9 +77,9 @@ UI2_BODY_INJECT = """
     </div>
   </div>
 </div>
-<div class="modal__backdrop" id="add-client-backdrop" aria-hidden="true"></div>
+<div class="modal__backdrop" id="add-client-backdrop" aria-hidden="true" style="display:none;"></div>
 
-<!-- Floating button (fallback, nel caso il template non abbia un'area toolbar) -->
+<!-- Floating button (fallback) -->
 <button class="btn btn-primary" id="btn-open-add-client" style="position:fixed;right:16px;bottom:16px;z-index:10000;">
   + Aggiungi cliente
 </button>
@@ -89,12 +90,10 @@ class UI2InjectMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         resp = await call_next(request)
 
-        # Inietta solo sulle pagine HTML sotto /ui2
         ct = resp.headers.get("content-type", "")
         if not request.url.path.startswith("/ui2") or "text/html" not in ct:
             return resp
 
-        # Leggi il corpo della risposta (stream -> bytes)
         body = b""
         if hasattr(resp, "body_iterator"):
             async for chunk in resp.body_iterator:
@@ -105,27 +104,24 @@ class UI2InjectMiddleware(BaseHTTPMiddleware):
         try:
             html = body.decode("utf-8", errors="ignore")
         except Exception:
-            return resp  # non tocchiamo se non decodificabile
+            return resp
 
-        # Inietta asset nel <head>
         if "</head>" in html and "ui2/static/ui2.css" not in html:
             html = html.replace("</head>", UI2_HEAD_INJECT + "\n</head>", 1)
 
-        # Inietta modale + bottone prima di </body> (una sola volta)
-        if "</body>" in html and "id=\"add-client-modal\"" not in html:
+        if "</body>" in html and 'id="add-client-modal"' not in html:
             html = html.replace("</body>", UI2_BODY_INJECT + "\n</body>", 1)
 
-        # Ritorna nuova Response con lo stesso status e headers base
-        new_resp = Response(
-            content=html,
-            status_code=resp.status_code,
-            media_type="text/html"
-        )
-        # Copia cookie e alcuni header utili
+        new_resp = Response(content=html, status_code=resp.status_code, media_type="text/html")
         for (k, v) in resp.headers.items():
             if k.lower() not in {"content-length", "content-type"}:
                 new_resp.headers[k] = v
         return new_resp
+
+app.add_middleware(UI2InjectMiddleware)
+# === /fine injection middleware ===
+
+
 
 # Registra il middleware
 app.add_middleware(UI2InjectMiddleware)
