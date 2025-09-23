@@ -31,122 +31,112 @@ if os.path.isdir("app/admin_ui/static"):
     app.mount("/ui2/static", StaticFiles(directory="app/admin_ui/static"), name="ui2_static")
     
     # === UI2: injection middleware (aggiunge bottone + modale senza toccare i template) ===
-# === UI2: injection middleware (robusto: inline CSS+JS, fallback se mancano </head>/<body>) ===
+# === UI2: injection middleware (popup centrato, no conflitti CSS) ===
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
 UI2_HEAD_INJECT = """
 <style>
-/* Inline CSS minimale per il modale */
-#add-client-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9998;display:none}
-#add-client-modal{position:fixed;inset:0;display:none;place-items:center;z-index:9999}
-#add-client-modal .modal__dialog{width:96%;max-width:560px;background:#121212;color:#eee;border:1px solid #2a2a2a;border-radius:12px;overflow:hidden;box-shadow:0 10px 30px rgba(0,0,0,.6)}
-#add-client-modal .modal__header{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid #2a2a2a}
-#add-client-modal .modal__title{margin:0;font-size:16px}
-#add-client-modal .modal__close{background:transparent;border:0;color:#aaa;font-size:20px;cursor:pointer}
-#add-client-modal .modal__body{padding:16px}
-#add-client-modal .modal__footer{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
-#add-client-modal .form-row{display:grid;gap:6px;margin-bottom:12px}
-#add-client-modal input,#add-client-modal textarea{background:#0d0d0d;border:1px solid #333;color:#eee;padding:8px;border-radius:8px}
-#add-client-modal input:focus,#add-client-modal textarea:focus{outline:none;border-color:#4c8bf5}
-.btn{padding:8px 12px;border-radius:8px;background:#222;color:#eee;border:1px solid #444;cursor:pointer}
-.btn:hover{background:#2a2a2a}
-.btn-primary{background:#4c8bf5;border-color:#3c74cc;color:#fff}
-.btn-primary:hover{background:#3c74cc}
-#btn-open-add-client{position:fixed;right:16px;bottom:16px;z-index:10000}
+/* Overlay + card indipendenti, prefisso mfai- */
+#mfai-overlay{position:fixed;left:0;top:0;width:100vw;height:100vh;background:rgba(0,0,0,.55);display:none;z-index:2147483646}
+#mfai-card{position:fixed;left:50vw;top:50vh;transform:translate(-50%,-50%);width:min(560px,92vw);background:#101218;color:#e8eaef;border:1px solid #282d38;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.6);display:none;z-index:2147483647}
+.mfai-hd{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #282d38}
+.mfai-ttl{margin:0;font-size:16px;font-weight:600}
+.mfai-x{background:#1a1f2b;border:1px solid #2e3544;border-radius:50%;width:28px;height:28px;color:#cfd5df;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+.mfai-bd{padding:16px}
+.mfai-ft{display:flex;gap:8px;justify-content:flex-end;padding:0 16px 16px}
+.mfai-row{display:grid;gap:6px;margin-bottom:12px}
+.mfai-inp,.mfai-txa{background:#0c0f15;border:1px solid #2b3240;color:#e8eaef;padding:10px;border-radius:8px;outline:none;width:100%}
+.mfai-inp:focus,.mfai-txa:focus{border-color:#4c8bf5;box-shadow:0 0 0 2px rgba(76,139,245,.25)}
+.mfai-btn{padding:8px 12px;border-radius:8px;background:#1c2230;color:#e8eaef;border:1px solid #2e3544;cursor:pointer}
+.mfai-btn:hover{background:#232b3b}
+.mfai-btn-primary{background:#4c8bf5;border-color:#3c74cc;color:#fff}
+.mfai-btn-primary:hover{background:#3c74cc}
+/* Bottone flottante sempre visibile */
+#mfai-open{position:fixed;right:16px;bottom:16px;z-index:2147483647}
 </style>
 """.strip()
 
 UI2_BODY_INJECT = """
 <!-- UI2_ADD_CLIENT_INJECT -->
-<div id="add-client-backdrop" aria-hidden="true"></div>
-<div class="modal" id="add-client-modal" aria-hidden="true">
-  <div class="modal__dialog">
-    <div class="modal__header">
-      <h3 class="modal__title">Aggiungi cliente</h3>
-      <button class="modal__close" id="btn-close-add-client" aria-label="Chiudi">×</button>
-    </div>
-    <div class="modal__body">
-      <form id="add-client-form" action="/ui2/clients/create" method="post">
-        <div class="form-row">
-          <label>Nome *</label>
-          <input type="text" name="name" required>
-        </div>
-        <div class="form-row">
-          <label>Instagram username *</label>
-          <input type="text" name="instagram_username" placeholder="@cliente" required>
-        </div>
-        <div class="form-row">
-          <label>API Key *</label>
-          <input type="text" name="api_key" minlength="8" required>
-        </div>
-        <div class="form-row">
-          <label>AI Prompt (opzionale)</label>
-          <textarea name="ai_prompt" rows="3" placeholder="Prompt personalizzato..."></textarea>
-        </div>
-        <div class="form-row">
-          <label class="checkbox"><input type="checkbox" name="active"> Attivo</label>
-        </div>
-        <div class="modal__footer">
-          <button type="button" class="btn" id="btn-cancel-add-client">Annulla</button>
-          <button type="submit" class="btn btn-primary">Crea</button>
-        </div>
-      </form>
-    </div>
+<div id="mfai-overlay" aria-hidden="true"></div>
+
+<div id="mfai-card" role="dialog" aria-modal="true" aria-labelledby="mfai-add-title">
+  <div class="mfai-hd">
+    <h3 id="mfai-add-title" class="mfai-ttl">Aggiungi cliente</h3>
+    <button class="mfai-x" id="mfai-close" aria-label="Chiudi">×</button>
+  </div>
+  <div class="mfai-bd">
+    <form id="mfai-form" action="/ui2/clients/create" method="post" autocomplete="off">
+      <div class="mfai-row">
+        <label class="form-label mb-0">Nome *</label>
+        <input class="mfai-inp" type="text" name="name" required>
+      </div>
+      <div class="mfai-row">
+        <label class="form-label mb-0">Instagram username *</label>
+        <input class="mfai-inp" type="text" name="instagram_username" placeholder="@cliente" required>
+      </div>
+      <div class="mfai-row">
+        <label class="form-label mb-0">API Key *</label>
+        <input class="mfai-inp" type="text" name="api_key" minlength="8" required>
+      </div>
+      <div class="mfai-row">
+        <label class="form-label mb-0">AI Prompt (opzionale)</label>
+        <textarea class="mfai-txa" name="ai_prompt" rows="3" placeholder="Prompt personalizzato..."></textarea>
+      </div>
+      <div class="mfai-row">
+        <label class="form-check-label">
+          <input class="form-check-input me-2" type="checkbox" name="active"> Attivo
+        </label>
+      </div>
+      <div class="mfai-ft">
+        <button type="button" class="mfai-btn" id="mfai-cancel">Annulla</button>
+        <button type="submit" class="mfai-btn mfai-btn-primary">Crea</button>
+      </div>
+    </form>
   </div>
 </div>
 
-<button class="btn btn-primary" id="btn-open-add-client">+ Aggiungi cliente</button>
+<button id="mfai-open" class="btn btn-primary btn-sm">+ Aggiungi cliente</button>
 
 <script>
-(function () {
-  var modal = document.getElementById('add-client-modal');
-  var backdrop = document.getElementById('add-client-backdrop');
-  var form = document.getElementById('add-client-form');
-  var openBtn = document.getElementById('btn-open-add-client');
-  var closeBtn = document.getElementById('btn-close-add-client');
-  var cancelBtn = document.getElementById('btn-cancel-add-client');
-
-  if (!modal || !backdrop) return;
-
-  function show(open) {
-    if (open) {
-      modal.style.display = 'grid';
-      backdrop.style.display = 'block';
-      modal.setAttribute('aria-hidden', 'false');
-      var first = modal.querySelector('input[name="name"]');
-      if (first) { try { first.focus(); } catch(e){} }
-    } else {
-      modal.style.display = 'none';
-      backdrop.style.display = 'none';
-      modal.setAttribute('aria-hidden', 'true');
+(function(){
+  function show(open){
+    var overlay=document.getElementById('mfai-overlay');
+    var card=document.getElementById('mfai-card');
+    if(!overlay||!card) return;
+    if(open){
+      overlay.style.display='block';
+      card.style.display='block';
+      card.setAttribute('aria-hidden','false');
+      var first=card.querySelector('input[name="name"]');
+      if(first){try{first.focus();}catch(e){}}
+    }else{
+      overlay.style.display='none';
+      card.style.display='none';
+      card.setAttribute('aria-hidden','true');
     }
   }
-
-  if (openBtn) openBtn.addEventListener('click', function(){ show(true); });
-  if (closeBtn) closeBtn.addEventListener('click', function(){ show(false); });
-  if (cancelBtn) cancelBtn.addEventListener('click', function(){ show(false); });
-  if (backdrop) backdrop.addEventListener('click', function(){ show(false); });
-  document.addEventListener('keydown', function(e){ if (e.key === 'Escape') show(false); });
-
-  if (form) {
-    form.addEventListener('submit', function(e){
-      var nameEl = form.querySelector('input[name="name"]');
-      var igEl = form.querySelector('input[name="instagram_username"]');
-      var apiEl = form.querySelector('input[name="api_key"]');
-      var name = nameEl ? nameEl.value.trim() : '';
-      var ig = igEl ? igEl.value.trim() : '';
-      var api = apiEl ? apiEl.value.trim() : '';
-      if (!name || !ig || !api || api.length < 8) {
-        e.preventDefault();
-        alert('Compila Nome, Username IG e API Key (min 8 caratteri).');
-        return;
+  var openBtn=document.getElementById('mfai-open');
+  var closeBtn=document.getElementById('mfai-close');
+  var cancelBtn=document.getElementById('mfai-cancel');
+  var overlay=document.getElementById('mfai-overlay');
+  var form=document.getElementById('mfai-form');
+  if(openBtn&&!openBtn._b){openBtn.addEventListener('click',function(){show(true)});openBtn._b=1;}
+  if(closeBtn&&!closeBtn._b){closeBtn.addEventListener('click',function(){show(false)});closeBtn._b=1;}
+  if(cancelBtn&&!cancelBtn._b){cancelBtn.addEventListener('click',function(){show(false)});cancelBtn._b=1;}
+  if(overlay&&!overlay._b){overlay.addEventListener('click',function(){show(false)});overlay._b=1;}
+  document.addEventListener('keydown',function(e){if(e.key==='Escape')show(false);});
+  if(form&&!form._b){
+    form.addEventListener('submit',function(e){
+      var name=(form.querySelector('input[name="name"]')||{}).value||'';
+      var ig=(form.querySelector('input[name="instagram_username"]')||{}).value||'';
+      var api=(form.querySelector('input[name="api_key"]')||{}).value||'';
+      if(!name.trim()||!ig.trim()||!api.trim()||api.trim().length<8){
+        e.preventDefault(); alert('Compila Nome, Username IG e API Key (min 8 caratteri).');
       }
-    });
+    }); form._b=1;
   }
-
-  // start closed
-  show(false);
 })();
 </script>
 """.strip()
@@ -171,31 +161,26 @@ class UI2InjectMiddleware(BaseHTTPMiddleware):
         except Exception:
             return resp
 
-        # evita doppie iniezioni
-        if "UI2_ADD_CLIENT_INJECT" in html:
-            new_resp = Response(content=html, status_code=resp.status_code, media_type="text/html")
-        else:
-            # HEAD: inserisci prima di </head> se c'è, altrimenti prepend
+        # Evita doppia iniezione
+        if "UI2_ADD_CLIENT_INJECT" not in html:
             if "</head>" in html:
                 html = html.replace("</head>", UI2_HEAD_INJECT + "\n</head>", 1)
             else:
                 html = UI2_HEAD_INJECT + "\n" + html
-
-            # BODY: inserisci prima di </body> se c'è, altrimenti append
             if "</body>" in html:
                 html = html.replace("</body>", UI2_BODY_INJECT + "\n</body>", 1)
             else:
                 html = html + "\n" + UI2_BODY_INJECT
 
-            new_resp = Response(content=html, status_code=resp.status_code, media_type="text/html")
-
-        # copia header non critici
+        new_resp = Response(content=html, status_code=resp.status_code, media_type="text/html")
         for (k, v) in resp.headers.items():
             if k.lower() not in {"content-length", "content-type"}:
                 new_resp.headers[k] = v
         return new_resp
 
 app.add_middleware(UI2InjectMiddleware)
+# === /fine injection middleware ===
+
 # === /fine injection middleware ===
 
 # === /fine injection middleware ===
