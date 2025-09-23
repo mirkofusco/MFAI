@@ -4,7 +4,6 @@
   BUILD MARKER: v-TEST-02
 </div>
 
-
 <!-- Alert risultato azioni -->
 {% if ok == 'created' %}
   <div class="alert alert-success">Cliente creato correttamente.</div>
@@ -39,7 +38,6 @@
   <a class="btn btn-outline-secondary btn-sm" href="/ui2/ping">Verifica UI2</a>
   <a class="btn btn-outline-secondary btn-sm" href="/admin/prompts-ui">Gestisci Prompts</a>
 </div>
-<p><a class="btn primary" href="/ui2/clients">Gestisci clienti</a></p>
 
 <!-- Aggiungi cliente -->
 <div class="card shadow-sm mb-4">
@@ -110,7 +108,6 @@
                 {{ item.ai_prompt or '-' }}
               </td>
               <td class="text-end">
-                <!-- In futuro: pulsante "Apri scheda" -->
                 <form action="/ui2/clients/delete" method="post" class="d-inline"
                       onsubmit="return confirm('Eliminare il cliente {{ item.name }} (ID {{ item.id }})?');">
                   <input type="hidden" name="client_id" value="{{ item.id }}">

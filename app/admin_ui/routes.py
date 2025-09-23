@@ -2,15 +2,10 @@
 # ------------------------------------------------------------
 # Admin UI (UI2) — Dashboard unica su /ui2
 # - Basic Auth (ADMIN_USER / ADMIN_PASSWORD)
-# - /ui2  (dashboard)  -> mostra eventuale lista clienti (se il template la usa) + alert ok/err
+# - /ui2  (dashboard) -> mostra lista clienti + alert ok/err
 # - POST /ui2/clients/create  -> crea cliente e torna su /ui2
 # - POST /ui2/clients/delete  -> elimina cliente e torna su /ui2
 # - (opzionali) toggle-active account IG, refresh token
-#
-# NOTE DB:
-# - Usa "engine" async SQLAlchemy (tenta app.db, poi app.database)
-# - Tabelle attese (senza schema): clients, instagram_accounts, tokens
-#   Se usi schema (es. mfai_app.clients), adatta le query.
 # ------------------------------------------------------------
 
 import os
@@ -43,6 +38,10 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 ADMIN_BASE_URL = os.getenv("ADMIN_BASE_URL", "http://127.0.0.1:8000")
 ADMIN_API_KEY = os.getenv("API_KEY", "")
 
+# --- Tabelle (supporto a schema esplicito: es. "mfai_app.clients")
+CLIENTS_TABLE = os.getenv("CLIENTS_TABLE", "clients")
+ACCOUNTS_TABLE = os.getenv("ACCOUNTS_TABLE", "instagram_accounts")
+
 # ------------------------------------------------------------
 # Auth: Basic
 # ------------------------------------------------------------
@@ -65,9 +64,9 @@ def ping(_: bool = Depends(require_admin)) -> HTMLResponse:
     return HTMLResponse("<h1>MF.AI Admin UI: OK</h1>")
 
 # ------------------------------------------------------------
-# Dashboard: /ui2  (UNICA pagina che usi)
-# - Accetta ok/err per mostrare alert in home.html
-# - (Facoltativo) Fornisce 'items' con i clienti, se il template vuole listarli
+# Dashboard unica: /ui2
+# - Mostra alert ok/err
+# - Carica lista clienti in 'items' (se DB disponibile)
 # ------------------------------------------------------------
 @router.get("/", response_class=HTMLResponse)
 async def home(
@@ -77,36 +76,23 @@ async def home(
     _: bool = Depends(require_admin),
 ) -> HTMLResponse:
     items: List[Dict[str, Any]] = []
+
     if engine is None:
-        # non blocchiamo la pagina: mostriamo la home comunque
+        # Mostra la pagina anche senza DB
         return templates.TemplateResponse(
             "home.html",
             {"request": request, "page_title": "MF.AI — Admin UI", "ok": ok, "err": err, "items": items},
         )
-    # ------------------------------------------------------------
-# Pagina Clienti: /ui2/clients
-# ------------------------------------------------------------
-@router.get("/clients", response_class=HTMLResponse)
-async def clients_page(
-    request: Request,
-    _: bool = Depends(require_admin),
-) -> HTMLResponse:
-    # La pagina è client-side driven: il JS chiama /admin/clients
-    return templates.TemplateResponse(
-        "clients.html",
-        {"request": request, "page_title": "Clienti · Admin"}
-    )
 
+    # Carica elenco clienti (id, name, instagram_username, active, ai_prompt)
+    query = text(f"""
+        SELECT id, name, instagram_username, active, ai_prompt
+        FROM {CLIENTS_TABLE}
+        ORDER BY id DESC
+    """)
 
-    # Se vuoi una lista clienti nel pannello (sidebar, widget, ecc.)
     async with engine.begin() as conn:
-        res = await conn.execute(
-            text("""
-                SELECT id, name, instagram_username, active, ai_prompt
-                FROM clients
-                ORDER BY id DESC
-            """)
-        )
+        res = await conn.execute(query)
         rows = res.mappings().all()
 
     items = [
@@ -153,15 +139,15 @@ async def ui_create_client(
     async with engine.begin() as conn:
         # Unicità instagram_username
         res = await conn.execute(
-            text("SELECT 1 FROM clients WHERE instagram_username = :u LIMIT 1"),
+            text(f"SELECT 1 FROM {CLIENTS_TABLE} WHERE instagram_username = :u LIMIT 1"),
             {"u": instagram_username},
         )
         if res.first() is not None:
             return RedirectResponse(url="/ui2?err=duplicate_username", status_code=303)
 
         await conn.execute(
-            text("""
-                INSERT INTO clients (name, instagram_username, api_key, active, ai_prompt)
+            text(f"""
+                INSERT INTO {CLIENTS_TABLE} (name, instagram_username, api_key, active, ai_prompt)
                 VALUES (:name, :username, :api_key, :active, :ai_prompt)
             """),
             {
@@ -192,7 +178,7 @@ async def ui_delete_client(
         # await conn.execute(text("DELETE FROM instagram_accounts WHERE client_id=:id"), {"id": client_id})
         # await conn.execute(text("DELETE FROM tokens WHERE client_id=:id"), {"id": client_id})
 
-        await conn.execute(text("DELETE FROM clients WHERE id = :id"), {"id": client_id})
+        await conn.execute(text(f"DELETE FROM {CLIENTS_TABLE} WHERE id = :id"), {"id": client_id})
 
     return RedirectResponse(url="/ui2?ok=deleted", status_code=303)
 
@@ -211,7 +197,7 @@ async def toggle_active(
     active = bool(int(new_active))
     async with engine.begin() as conn:
         res = await conn.execute(
-            text("UPDATE instagram_accounts SET active = :active WHERE id = :id"),
+            text(f"UPDATE {ACCOUNTS_TABLE} SET active = :active WHERE id = :id"),
             {"active": 1 if active else 0, "id": ig_account_id},
         )
         if getattr(res, "rowcount", 0) == 0:
