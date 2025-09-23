@@ -1059,9 +1059,8 @@ except Exception as e:
     print("Meta webhook router non caricato:", e)
 
 try:
-    from app.routers import admin_api, admin_prompts
+    from app.routers import admin_api
     app.include_router(admin_api.router)
-    app.include_router(admin_prompts.router)
 except Exception as e:
     print("Admin routers non caricati:", e)
 

@@ -1,0 +1,80 @@
+.
+├── .gitignore
+├── .python-version
+├── account.json
+├── api
+│   ├── admin.py
+│   └── messages.py
+├── app
+│   ├── __init__.py
+│   ├── admin_ui
+│   │   ├── __init__.py
+│   │   ├── routes_prompts.py
+│   │   ├── routes.py
+│   │   ├── static
+│   │   │   ├── client-chat.js
+│   │   │   ├── clients.js
+│   │   │   ├── css
+│   │   │   │   └── app.css
+│   │   │   ├── prompts.js
+│   │   │   └── public
+│   │   │       └── chat.js
+│   │   └── templates
+│   │       ├── base.html
+│   │       ├── clients.html
+│   │       └── home.html
+│   ├── api
+│   │   ├── __init__.py
+│   │   ├── clients.py
+│   │   └── messages.py
+│   ├── connect.py
+│   ├── database.py
+│   ├── db_session.py
+│   ├── db.py
+│   ├── init_db.py
+│   ├── main.py
+│   ├── main.py.bak_ui2m_20250914_221036
+│   ├── main.py.bak.ui2x_20250914_212029
+│   ├── models.py
+│   ├── prompt_engine.py
+│   ├── public_ui
+│   │   ├── __init__.py
+│   │   ├── routes.py
+│   │   └── templates
+│   │       ├── base_public.html
+│   │       └── space.html
+│   ├── routers
+│   │   ├── __init__.py
+│   │   ├── admin_api.py
+│   │   ├── admin_api.py.bak_move_20250914_213418
+│   │   ├── admin_api.py.bak_move_20250914_213828
+│   │   ├── admin_api.py.bak_reassign_20250914_214427
+│   │   ├── admin_client_prompts.py
+│   │   ├── admin_prompts.py
+│   │   └── meta_webhook.py
+│   ├── schemas
+│   │   └── prompts.py
+│   ├── security_admin.py
+│   ├── services
+│   │   ├── client_prompts.py
+│   │   └── prompts.py
+│   └── templates
+│       ├── admin_client_detail.html
+│       ├── admin_clients.html
+│       ├── admin_prompts.html
+│       ├── client_chat.html
+│       └── login.html
+├── create_client.json
+├── deps_freeze.txt
+├── env_info.txt
+├── git_status.txt
+├── Procfile
+├── prompt.json
+├── push_error.txt
+├── requirements.txt
+├── structure.txt
+├── struttura.txt
+├── token.json
+└── tracked_files.txt
+
+15 directories, 63 files

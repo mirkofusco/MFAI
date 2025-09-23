@@ -1,0 +1,1035 @@
+# ============================================================
+# MF.AI — FastAPI (main.py) — UI /ui2 + Prompts + Bot + Logs
+# ============================================================
+
+import os
+from datetime import datetime, timedelta, timezone
+from typing import Optional, Dict
+
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from fastapi.security import APIKeyHeader
+from pydantic import BaseModel, Field
+from sqlalchemy import text
+
+from app.db import engine  # engine async verso Neon
+
+APP_NAME = "MF.AI"
+app = FastAPI(title=APP_NAME)
+
+# -----------------------------------------------------------
+# UI /ui2 (CSP-safe: niente inline; asset locali)
+# -----------------------------------------------------------
+@app.get("/ui2", response_class=HTMLResponse)
+def ui2_page():
+    return """<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>MF.AI — Clienti</title>
+  <link rel="stylesheet" href="/ui2.css">
+</head>
+<body>
+  <div id="app"></div>
+  <script src="/ui2.js" defer></script>
+</body>
+</html>"""
+
+@app.get("/ui2.css")
+def ui2_css():
+    return Response(
+        """:root{--bg:#0b0f19;--panel:#12182a;--text:#e8eef6;--muted:#8ea0b5;--border:#1f2942;--accent:#4da3ff;--ok:#22c55e;--bad:#ef4444;--btn:#0f1730}
+*{box-sizing:border-box}html,body{height:100%}body{margin:0;background:var(--bg);color:var(--text);font:14px system-ui,Segoe UI,Roboto}
+.app{display:grid;grid-template-columns:300px 1fr;height:100vh}
+.side{border-right:1px solid var(--border);background:var(--panel);display:flex;flex-direction:column}
+.brand{padding:14px 12px;border-bottom:1px solid var(--border);font-weight:700}
+.search{padding:10px 12px}.search input{width:100%;padding:10px;border-radius:10px;border:1px solid var(--border);background:#0d1322;color:var(--text)}
+.list{overflow:auto;padding:8px}
+.item{padding:10px;border-radius:10px;cursor:pointer;margin:6px 4px}
+.item:hover{background:#0e162c}.item.active{outline:1px solid var(--accent);background:#0e1a33}
+.item h4{margin:0 0 4px 0;font-size:14px}.meta{color:var(--muted);font-size:12px}
+.main{display:flex;flex-direction:column}
+.bar{display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--border);padding:10px;background:#0d1426;justify-content:space-between}
+.crumb{padding:6px 10px;border:1px solid var(--border);border-radius:999px}
+.hint{color:var(--muted)}
+.content{padding:16px;overflow:auto}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:14px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:10px 0}
+.kv{display:flex;gap:6px;align-items:center;background:#0e1528;border:1px solid var(--border);padding:8px 10px;border-radius:10px}
+.kv b{opacity:.9}
+input[type="text"],textarea{width:100%;padding:10px;border-radius:10px;border:1px solid var(--border);background:#0d1322;color:var(--text);font:13px}
+button{padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--btn);color:var(--text);cursor:pointer}
+button.primary{outline:1px solid var(--accent)}
+button.danger{border-color:rgba(239,68,68,.4)}
+button:hover{filter:brightness(1.1)}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid var(--border);border-radius:999px;font-size:12px}
+.chip.ok{background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.3);color:var(--ok)}
+.chip.bad{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.3);color:var(--bad)}
+.chip.neutral{background:#0e1528;color:#c7d2e2}
+.group{display:flex;align-items:center;gap:10px}
+.headerline{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.title{font-size:18px;font-weight:700}
+.log{font-family:ui-monospace,Menlo,Consolas;font-size:12px;background:#0c1222;border:1px solid #1b2442;border-radius:10px;padding:10px;white-space:pre-wrap;max-height:220px;overflow:auto}
+#app{display:grid;grid-template-columns:300px 1fr;height:100vh}
+""",
+        media_type="text/css"
+    )
+
+@app.get("/ui2.js")
+def ui2_js():
+    JS = '''(function(){
+  // API endpoints usati dalla UI
+  var api = {
+    clients: '/admin/clients',
+    accounts: '/admin/accounts',          // GET elenco + PATCH toggle bot
+    tokens: '/admin/tokens',              // GET elenco token
+    logs: '/admin/logs',                  // GET logs
+    prompts: function(cid){ return '/ui2/prompts/'+cid; }, // GET/PUT prompt unico "system"
+    adminUI: '/admin/ui'
+  };
+
+  var state = {clients:[], accounts:[], tokens:[], selected:null};
+  function $(s, el){ return (el||document).querySelector(s); }
+  function esc(s){
+    s = (s==null?'':String(s));
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function repAll(str, find, repl){ return String(str).split(find).join(repl); }
+  function j(u,o){
+    o = o||{}; o.credentials = 'include';
+    return fetch(u,o).then(function(r){
+      if(!r.ok) return r.text().then(function(t){ throw new Error('HTTP '+r.status+' '+r.statusText+' on '+u+'\\n'+t); });
+      return r.json();
+    });
+  }
+
+  // Shell
+  var root = document.getElementById('app');
+  root.innerHTML =
+    '<aside class="side">'
+    + '<div class="brand">MF.AI — Clienti</div>'
+    + '<div class="search"><input id="q" placeholder="Cerca cliente…"></div>'
+    + '<div id="list" class="list"><div class="card empty">Carico clienti…</div></div>'
+    + '</aside>'
+    + '<main class="main">'
+    + '  <div class="bar">'
+    + '    <div style="display:flex;align-items:center;gap:8px">'
+    + '      <div id="crumb" class="crumb">Nessun cliente</div>'
+    + '      <span id="hint" class="hint"></span>'
+    + '    </div>'
+    + '    <div><a href="/admin/ui" target="_blank"><button title="Apri l\\'Admin classico in una nuova scheda">Admin classico</button></a></div>'
+    + '  </div>'
+    + '  <div id="detail" class="content"><div class="card empty">Seleziona un cliente dalla lista.</div></div>'
+    + '</main>';
+
+  function boot(){
+    $('#hint').textContent = 'Carico…';
+    Promise.all([
+      j(api.clients),
+      j(api.accounts),
+      j(api.tokens).catch(function(){ return []; })
+    ]).then(function(arr){
+      var c = arr[0], a = arr[1], t = arr[2];
+      state.clients=c; state.accounts=a; state.tokens=t;
+      renderList();
+      $('#hint').textContent = 'Clienti: '+c.length;
+      $('#q').addEventListener('input', function(e){ renderList(e.target.value); });
+    }).catch(function(err){
+      showFatal(err);
+      console.error(err);
+    });
+  }
+
+  function renderList(f){
+    f = f||'';
+    var box = $('#list'); box.innerHTML='';
+    var q = String(f).trim().toLowerCase();
+    var items = state.clients.filter(function(c){
+      var s = ((c.id||'')+' '+(c.name||'')+' '+(c.company||'')).toLowerCase();
+      return !q || s.indexOf(q) !== -1;
+    });
+    items.forEach(function(c){
+      var acc = (function(){ for(var i=0;i<state.accounts.length;i++){ if(state.accounts[i].client_id===c.id) return state.accounts[i]; } return null; })();
+      var el = document.createElement('div');
+      var username = acc ? '@'+esc(acc.username) : '—';
+      var botEnabled = (acc && acc.bot_enabled) ? 'ON' : 'OFF';
+      el.className = 'item' + (state.selected===c.id?' active':'');
+      el.innerHTML = '<h4>' + esc(c.name||c.company||('Cliente #'+c.id)) + '</h4>'
+                   + '<div class="meta">' + username + ' · Bot ' + botEnabled + '</div>';
+      el.onclick = function(){ select(c.id); };
+      box.appendChild(el);
+    });
+    if(items.length===0) box.innerHTML='<div class="card empty">Nessun risultato</div>';
+  }
+
+  function select(clientId){
+    state.selected=clientId; renderList($('#q').value||'');
+    var c=(function(){ for(var i=0;i<state.clients.length;i++){ if(state.clients[i].id===clientId) return state.clients[i]; } return null; })();
+    var acc=(function(){ for(var i=0;i<state.accounts.length;i++){ if(state.accounts[i].client_id===clientId) return state.accounts[i]; } return null; })();
+    $('#crumb').textContent = (c && (c.name||c.company)) ? (c.name||c.company) : ('Cliente #'+clientId);
+    $('#hint').textContent='Carico scheda…';
+
+    var prompts=null, promptsErr=null, logs=[];
+    j(api.prompts(clientId)).then(function(p){ prompts=p; })
+      .catch(function(e){ promptsErr=String(e); })
+      .then(function(){
+        return j(api.logs+'?client_id='+clientId+'&limit=30').then(function(l){ logs=l; }).catch(function(){});
+      })
+      .then(function(){
+        var toks=[];
+        if(acc){ for(var i=0;i<state.tokens.length;i++){ if(state.tokens[i].ig_account_id===acc.id) toks.push(state.tokens[i]); } }
+        renderDetail({c:c,acc:acc,toks:toks,logs:logs,prompts:prompts,promptsErr:promptsErr});
+        $('#hint').textContent='Pronto';
+      })
+      .catch(function(err){ showFatal(err); console.error(err); });
+  }
+
+  function headerLine(name){
+    return '<div class="headerline">'
+      + '<div class="title">'+esc(name||'Cliente')+'</div>'
+      + '<div class="group">'
+      +   '<button id="refresh">Ricarica scheda</button>'
+      +   '<a href="/admin/ui" target="_blank"><button>Admin classico</button></a>'
+      + '</div>'
+      + '</div>';
+  }
+
+  function renderDetail(ctx){
+    var c=ctx.c, acc=ctx.acc, toks=ctx.toks, logs=ctx.logs, prompts=ctx.prompts, promptsErr=ctx.promptsErr;
+    var d=document.getElementById('detail');
+
+    var statusChip = (acc && acc.active) ? '<span class="chip ok">Attivo</span>' : '<span class="chip bad">Disattivo</span>';
+    var botChip = (acc && acc.bot_enabled) ? '<span id="botchip" class="chip ok">ON</span>' : '<span id="botchip" class="chip bad">OFF</span>';
+
+    var botButtons = acc
+      ? '<div class="group" id="botButtons">'
+          + '<button id="btnBotOn"  class="primary">Attiva bot</button>'
+          + '<button id="btnBotOff" class="danger">Disattiva bot</button>'
+          + botChip
+          + '<span id="bots" class="hint"></span>'
+        + '</div>'
+      : '<span class="hint">Nessun account IG collegato.</span>';
+
+    var promptsCard='';
+    if(prompts){
+      var val = prompts.system || '';
+      val = repAll(repAll(val,'<','&lt;'),'>','&gt;');
+      promptsCard =
+        '<div class="card">'
+        + '<h3>Prompt cliente (unico)</h3>'
+        + '<div class="row"><textarea id="system" rows="8" placeholder="Scrivi qui il prompt completo...">'+val+'</textarea></div>'
+        + '<div class="row" style="justify-content:flex-end">'
+        +   '<span id="ps" class="hint" style="margin-right:8px"></span>'
+        +   '<button id="savep" class="primary">Salva</button>'
+        + '</div>'
+        + '</div>';
+    } else {
+      var info = promptsErr ? String(promptsErr).split('\\n')[0] : 'endpoint non raggiungibile';
+      promptsCard =
+        '<div class="card">'
+        + '<h3>Prompt cliente (unico)</h3>'
+        + '<div class="row">'
+        +   '<span class="chip neutral">Sezione disabilitata</span>'
+        +   '<span class="hint">/ui2/prompts/{client_id} non disponibile ('+esc(info)+').</span>'
+        + '</div>'
+        + '<div class="row"><button id="retryPrompts">Riprova</button>'
+        + '<a href="/admin/ui" target="_blank"><button>Admin classico</button></a></div>'
+        + '</div>';
+    }
+
+    var toksHtml = '';
+    if(toks && toks.length){
+      var lines = [];
+      for(var i=0;i<toks.length;i++){
+        var t=toks[i];
+        var when = t.expires_at ? new Date(t.expires_at).toLocaleString() : '—';
+        lines.push('• ' + (t.long_lived?'LLT':'SLT') + ' | scade: ' + when + ' | active=' + t.active);
+      }
+      toksHtml = '<div class="log">'+esc(lines.join('\\n'))+'</div>';
+    } else {
+      toksHtml = '<div class="meta">Nessun token per questo account.</div>';
+    }
+
+    var logsHtml = '';
+    if(logs && logs.length){
+      var L = [];
+      for(var i=0;i<logs.length;i++){
+        var x=logs[i];
+        var ts = new Date(x.ts || x.created_at).toLocaleString();
+        var dir = x.direction || '';
+        var payload = x.payload ? JSON.stringify(x.payload) : '';
+        L.push('['+ts+'] '+dir+' '+payload);
+      }
+      logsHtml = '<div class="log">'+esc(L.join('\\n'))+'</div>';
+    } else {
+      logsHtml = '<div class="meta">Nessun log recente.</div>';
+    }
+
+    d.innerHTML =
+      '<div class="card">'
+      +   headerLine((c && (c.name||c.company)) ? (c.name||c.company) : ('Cliente #'+c.id))
+      +   '<div class="row">'
+      +     '<div class="kv"><b>Client ID</b> '+String(c.id)+'</div>'
+      +     '<div class="kv"><b>IG</b> '+(acc?('@'+esc(acc.username)):'—')+'</div>'
+      +     '<div class="kv"><b>IG_USER_ID</b> '+(acc?esc(acc.ig_user_id):'—')+'</div>'
+      +     '<div class="kv"><b>Stato</b> '+statusChip+'</div>'
+      +   '</div>'
+      +   '<div class="row">'+botButtons+'</div>'
+      + '</div>'
+      + promptsCard
+      + '<div class="card"><h3>Token</h3>'+toksHtml+'</div>'
+      + '<div class="card"><h3>Ultimi log</h3>'+logsHtml+'</div>';
+
+    var refresh=$('#refresh'); if(refresh){ refresh.onclick=function(){ select(c.id); }; }
+
+    // BOT handlers — PATCH /admin/accounts {ig_user_id, bot_enabled}
+    var btnOn=$('#btnBotOn'), btnOff=$('#btnBotOff'), bots=$('#bots'), botchip=$('#botchip');
+    function setBot(enabled){
+      bots.textContent='…';
+      j(api.accounts,{
+        method:'PATCH',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ ig_user_id: acc.ig_user_id, bot_enabled: enabled })
+      }).then(function(){
+        botchip.textContent = enabled ? 'ON' : 'OFF';
+        botchip.className = 'chip ' + (enabled ? 'ok' : 'bad');
+        bots.textContent='Salvato';
+        for(var i=0;i<state.accounts.length;i++){ if(state.accounts[i].id===acc.id){ state.accounts[i].bot_enabled = enabled; break; } }
+      }).catch(function(){
+        bots.textContent='Errore';
+      });
+    }
+    if(btnOn && btnOff && acc){ btnOn.onclick = function(){ setBot(true); }; btnOff.onclick = function(){ setBot(false); }; }
+
+    // Prompts handlers (campo unico "system")
+    var savep=$('#savep'), ps=$('#ps');
+    if(savep){
+      savep.onclick=function(){
+        ps.textContent='…';
+        fetch(api.prompts(c.id),{
+          method:'PUT',
+          credentials:'include',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({ system: $('#system').value })
+        }).then(function(){ ps.textContent='Salvato'; })
+          .catch(function(){ ps.textContent='Errore'; });
+      };
+    }
+    var retry=$('#retryPrompts'); if(retry){ retry.onclick=function(){ select(c.id); }; }
+  }
+
+  function showFatal(msg){
+    var app=document.getElementById('app');
+    app.innerHTML='<div style="padding:20px;font-family:system-ui"><h2>⚠️ Errore UI</h2>'
+      + '<pre style="white-space:pre-wrap;background:#111;color:#eee;padding:12px;border-radius:8px;border:1px solid #333;max-height:50vh;overflow:auto">'
+      + esc(String(msg)) + '</pre></div>';
+  }
+
+  try { boot(); } catch (e) { showFatal(e); console.error(e); }
+})();'''
+    return Response(JS, media_type="application/javascript")
+
+# -----------------------------------------------------------
+# Admin classico (ponte)
+# -----------------------------------------------------------
+@app.get("/admin/ui", response_class=HTMLResponse)
+def admin_ui_bridge():
+    return """<!doctype html><html lang="it"><head><meta charset="utf-8">
+<title>Admin classico</title></head><body style="font-family:system-ui;padding:20px">
+<h2>Admin classico</h2>
+<p>Se il vecchio pannello è disponibile, lo trovi qui:
+  <a href="/ui/clients">/ui/clients</a>
+</p>
+<p>Oppure usa la nuova interfaccia: <a href="/ui2">/ui2</a></p>
+</body></html>"""
+
+# -----------------------------------------------------------
+# Static (facoltativo)
+# -----------------------------------------------------------
+if os.path.isdir("app/admin_ui/static"):
+    app.mount("/static", StaticFiles(directory="app/admin_ui/static"), name="static")
+
+# -----------------------------------------------------------
+# Router esterni (import safe — opzionali)
+# -----------------------------------------------------------
+try:
+    from app.routers.meta_webhook import router as meta_webhook_router
+    app.include_router(meta_webhook_router)
+except Exception as e:
+    print("Meta webhook router non caricato:", e)
+
+try:
+    from app.public_ui.routes import router as public_ui_router  # type: ignore
+    app.include_router(public_ui_router)
+except Exception as e:
+    print("Public UI router non caricato:", e)
+
+# -----------------------------------------------------------
+# Templates (Jinja2 opzionali)
+# -----------------------------------------------------------
+templates = Jinja2Templates(directory="app/templates") if os.path.isdir("app/templates") else None
+
+# -----------------------------------------------------------
+# CORS
+# -----------------------------------------------------------
+ALLOWED_ORIGINS = [
+    "https://mid-ranna-soluzionidigitaliroma-f8d1ef2a.koyeb.app",
+    "https://api.soluzionidigitali.roma.it",
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# -----------------------------------------------------------
+# Security headers (CSP)
+# -----------------------------------------------------------
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    resp = await call_next(request)
+    resp.headers.update(
+        {
+            "X-Frame-Options": "DENY",
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "no-referrer",
+            "Permissions-Policy": "camera=(), geolocation=(), microphone=()",
+            "Cache-Control": "no-store",
+            "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+            "Content-Security-Policy": (
+                "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:"
+            ),
+        }
+    )
+    return resp
+
+# -----------------------------------------------------------
+# API Key guard (per alcune POST/PUT opzionali)
+# -----------------------------------------------------------
+API_KEY = os.getenv("API_KEY", "")
+api_key_header = APIKeyHeader(name="x-api-key", auto_error=False)
+
+async def require_api_key(key: Optional[str] = Depends(api_key_header)) -> None:
+    if not API_KEY or key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+# -----------------------------------------------------------
+# verify_admin (fallback se modulo assente)
+# -----------------------------------------------------------
+try:
+    from app.security_admin import verify_admin
+except Exception:
+    async def verify_admin():
+        return None
+
+# -----------------------------------------------------------
+# SCHEMA SQL (con bot_enabled) + startup
+# -----------------------------------------------------------
+SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS mfai_app.clients (
+  id BIGSERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  email TEXT UNIQUE NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS mfai_app.instagram_accounts (
+  id BIGSERIAL PRIMARY KEY,
+  client_id BIGINT NOT NULL REFERENCES mfai_app.clients(id) ON DELETE CASCADE,
+  ig_user_id TEXT UNIQUE NOT NULL,
+  username TEXT NOT NULL,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  bot_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS mfai_app.tokens (
+  id BIGSERIAL PRIMARY KEY,
+  ig_account_id BIGINT NOT NULL REFERENCES mfai_app.instagram_accounts(id) ON DELETE CASCADE,
+  access_token TEXT NOT NULL,
+  expires_at TIMESTAMPTZ,
+  long_lived BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  active BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+CREATE TABLE IF NOT EXISTS mfai_app.message_logs (
+  id BIGSERIAL PRIMARY KEY,
+  ig_account_id BIGINT REFERENCES mfai_app.instagram_accounts(id) ON DELETE SET NULL,
+  direction TEXT NOT NULL CHECK (direction IN ('in','out')),
+  payload TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_tokens_igacct_created
+  ON mfai_app.tokens(ig_account_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ig_accounts_client
+  ON mfai_app.instagram_accounts(client_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_token_per_acct
+  ON mfai_app.tokens(ig_account_id)
+  WHERE active = TRUE;
+
+CREATE TABLE IF NOT EXISTS mfai_app.public_spaces (
+  id BIGSERIAL PRIMARY KEY,
+  client_id BIGINT NOT NULL REFERENCES mfai_app.clients(id) ON DELETE CASCADE,
+  slug TEXT UNIQUE NOT NULL,
+  title TEXT NOT NULL,
+  intro TEXT,
+  system_prompt TEXT NOT NULL,
+  logo_url TEXT,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_public_spaces_client
+  ON mfai_app.public_spaces(client_id);
+
+CREATE INDEX IF NOT EXISTS idx_public_spaces_active
+  ON mfai_app.public_spaces(active);
+
+CREATE TABLE IF NOT EXISTS mfai_app.client_prompts (
+  id BIGSERIAL PRIMARY KEY,
+  client_id BIGINT NOT NULL REFERENCES mfai_app.clients(id) ON DELETE CASCADE,
+  key TEXT NOT NULL,
+  value TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (client_id, key)
+);
+"""
+
+def _split_sql(sql: str):
+    for part in sql.split(";"):
+        stmt = part.strip()
+        if stmt:
+            yield stmt
+
+@app.on_event("startup")
+async def ensure_schema():
+    async with engine.begin() as conn:
+        await conn.exec_driver_sql("CREATE SCHEMA IF NOT EXISTS mfai_app AUTHORIZATION mfai_owner;")
+        await conn.exec_driver_sql("SET search_path TO mfai_app;")
+        for stmt in _split_sql(SCHEMA_SQL):
+            await conn.exec_driver_sql(stmt)
+        # safety: aggiungi colonna bot_enabled se mancante
+        await conn.exec_driver_sql("""
+          ALTER TABLE mfai_app.instagram_accounts
+          ADD COLUMN IF NOT EXISTS bot_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+        """)
+        # seed demo opzionale
+        if os.getenv("PUBLIC_SEED_DEMO", "1") == "1":
+            await conn.exec_driver_sql("""
+            DO $$
+            DECLARE cid BIGINT;
+            BEGIN
+              INSERT INTO mfai_app.clients(name, email)
+              VALUES ('Public Demo', 'public.demo@example.local')
+              ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name
+              RETURNING id INTO cid;
+
+              INSERT INTO mfai_app.public_spaces(client_id, slug, title, intro, system_prompt, logo_url, active)
+              VALUES (
+                cid,
+                'dietologa-demo',
+                'Dietologa — Demo',
+                'Benvenuto nello spazio demo della Dietologa.',
+                'Sei una dietologa professionale. Rispondi SEMPRE in italiano, con tono empatico e pratico. Offri esempi concreti e suggerimenti alimentari bilanciati. Se la domanda è clinica, invita a consultare un medico.',
+                NULL,
+                TRUE
+              )
+              ON CONFLICT (slug) DO UPDATE
+                SET client_id = EXCLUDED.client_id,
+                    title = EXCLUDED.title,
+                    intro = EXCLUDED.intro,
+                    system_prompt = EXCLUDED.system_prompt,
+                    active = TRUE;
+            END $$;
+            """)
+
+# -----------------------------------------------------------
+# Routes base
+# -----------------------------------------------------------
+@app.get("/")
+def home():
+    return {"ok": True, "app": APP_NAME}
+
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+@app.get("/ping")
+def ping():
+    return {"pong": True}
+
+@app.get("/db/health")
+async def db_health():
+    async with engine.connect() as conn:
+        r = await conn.execute(text("SELECT 'ok'"))
+        return {"db": r.scalar_one()}
+
+# -----------------------------------------------------------
+# Admin JSON minimi che servono alla UI /ui2
+# -----------------------------------------------------------
+# 1) Clients (lista)
+@app.get("/admin/clients")
+async def admin_clients():
+    q = text("SELECT id, name, email FROM mfai_app.clients ORDER BY id DESC LIMIT 500")
+    async with engine.connect() as conn:
+        rows = (await conn.execute(q)).mappings().all()
+    return rows
+
+# 2) Accounts (GET lista + PATCH toggle bot)
+class PatchAccountPayload(BaseModel):
+    ig_user_id: str
+    bot_enabled: bool
+
+@app.get("/admin/accounts")
+async def admin_accounts():
+    q = text("""
+      SELECT id, client_id, ig_user_id, username, active, bot_enabled, created_at
+      FROM mfai_app.instagram_accounts
+      ORDER BY id DESC
+      LIMIT 1000
+    """)
+    async with engine.connect() as conn:
+        rows = (await conn.execute(q)).mappings().all()
+    return rows
+
+@app.patch("/admin/accounts")
+async def admin_accounts_patch(body: PatchAccountPayload):
+    ig = body.ig_user_id.strip()
+    async with engine.begin() as conn:
+        res = await conn.execute(text("""
+          UPDATE mfai_app.instagram_accounts
+          SET bot_enabled = :flag
+          WHERE ig_user_id = :ig
+          RETURNING id
+        """), {"flag": body.bot_enabled, "ig": ig})
+        row = res.first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Instagram account non trovato")
+    return {"status": "ok", "ig_user_id": ig, "bot_enabled": body.bot_enabled}
+
+# 3) Logs (GET)
+@app.get("/admin/logs")
+async def admin_logs(
+    client_id: Optional[int] = Query(None),
+    ig_account_id: Optional[int] = Query(None),
+    limit: int = Query(30, ge=1, le=500),
+):
+    if client_id:
+        q = text("""
+            SELECT ml.id, ml.ig_account_id, ml.direction, ml.payload, ml.created_at
+            FROM mfai_app.message_logs ml
+            WHERE ml.ig_account_id IN (
+              SELECT ia.id FROM mfai_app.instagram_accounts ia WHERE ia.client_id = :cid
+            )
+            ORDER BY ml.created_at DESC
+            LIMIT :lim
+        """)
+        params = {"cid": client_id, "lim": limit}
+    elif ig_account_id:
+        q = text("""
+            SELECT ml.id, ml.ig_account_id, ml.direction, ml.payload, ml.created_at
+            FROM mfai_app.message_logs ml
+            WHERE ml.ig_account_id = :aid
+            ORDER BY ml.created_at DESC
+            LIMIT :lim
+        """)
+        params = {"aid": ig_account_id, "lim": limit}
+    else:
+        q = text("""
+            SELECT ml.id, ml.ig_account_id, ml.direction, ml.payload, ml.created_at
+            FROM mfai_app.message_logs ml
+            ORDER BY ml.created_at DESC
+            LIMIT :lim
+        """)
+        params = {"lim": limit}
+
+    async with engine.connect() as conn:
+        rows = (await conn.execute(q, params)).mappings().all()
+    return rows
+
+# 4) Tokens (GET elenco “safe”)
+@app.get("/admin/tokens")
+async def admin_tokens(
+    client_id: Optional[int] = Query(None),
+    ig_account_id: Optional[int] = Query(None),
+    limit: int = Query(500, ge=1, le=2000),
+):
+    base = """
+        SELECT t.id, t.ig_account_id, t.expires_at, t.long_lived, t.active, t.created_at
+        FROM mfai_app.tokens t
+    """
+    params: Dict[str, object] = {"lim": limit}
+
+    if client_id:
+        q = text(base + """
+            WHERE t.ig_account_id IN (
+              SELECT ia.id FROM mfai_app.instagram_accounts ia WHERE ia.client_id = :cid
+            )
+            ORDER BY t.created_at DESC
+            LIMIT :lim
+        """)
+        params["cid"] = client_id
+    elif ig_account_id:
+        q = text(base + """
+            WHERE t.ig_account_id = :aid
+            ORDER BY t.created_at DESC
+            LIMIT :lim
+        """)
+        params["aid"] = ig_account_id
+    else:
+        q = text(base + """
+            ORDER BY t.created_at DESC
+            LIMIT :lim
+        """)
+
+    async with engine.connect() as conn:
+        rows = (await conn.execute(q, params)).mappings().all()
+    return rows
+
+# -----------------------------------------------------------
+# Prompts endpoints dedicati per /ui2
+# -----------------------------------------------------------
+# -----------------------------------------------------------
+# Prompts endpoints dedicati per /ui2 (singolo campo "system")
+# -----------------------------------------------------------
+class ClientPromptSystem(BaseModel):
+    system: str = ""
+
+@app.get("/ui2/prompts/{client_id}")
+async def ui2_get_prompts(client_id: int):
+    async with engine.connect() as conn:
+        rows = (await conn.execute(text("""
+          SELECT key, value
+          FROM mfai_app.client_prompts
+          WHERE client_id = :cid
+        """), {"cid": client_id})).mappings().all()
+    data: Dict[str, str] = {r["key"]: r["value"] for r in rows}
+    return {"system": data.get("system", "")}
+
+@app.put("/ui2/prompts/{client_id}")
+async def ui2_put_prompts(client_id: int, body: ClientPromptSystem):
+    async with engine.begin() as conn:
+        await conn.execute(text("""
+          INSERT INTO mfai_app.client_prompts (client_id, key, value)
+          VALUES (:cid, 'system', :v)
+          ON CONFLICT (client_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+        """), {"cid": client_id, "v": body.system})
+    return {"status": "ok"}
+
+
+# -----------------------------------------------------------
+# OAuth callback (se serve)
+# -----------------------------------------------------------
+@app.get("/oauth/callback")
+async def oauth_callback(request: Request):
+    code = request.query_params.get("code")
+    state = request.query_params.get("state")
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing ?code in callback")
+    return {"status": "ok", "received_code": True, "code_preview": (code[:12] + "..."), "state": state}
+
+# -----------------------------------------------------------
+# Token utilities
+# -----------------------------------------------------------
+class SaveTokenPayload(BaseModel):
+    token: str = Field(..., min_length=5)
+    ig_user_id: str = Field(..., min_length=3)
+    username: str = Field(..., min_length=1)
+    client_name: str = "Default Client"
+    client_email: Optional[str] = None
+    expires_at: Optional[datetime] = None
+
+class RefreshTokenPayload(BaseModel):
+    ig_user_id: str = Field(..., min_length=3)
+    token: str = Field(..., min_length=5)
+    expires_in_days: int = Field(default=60, ge=1, le=365)
+
+@app.post("/save-token", dependencies=[Depends(require_api_key)])
+async def save_token(data: SaveTokenPayload):
+    try:
+        exp = data.expires_at or (datetime.now(timezone.utc) + timedelta(days=60))
+        async with engine.begin() as conn:
+            client_id = (await conn.execute(
+                text("""
+                  INSERT INTO mfai_app.clients (name, email)
+                  VALUES (:name, COALESCE(:email, REPLACE(LOWER(:name),' ','_') || '@example.local'))
+                  ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name
+                  RETURNING id
+                """), {"name": data.client_name, "email": data.client_email}
+            )).scalar_one()
+
+            ig_account_id = (await conn.execute(
+                text("""
+                  INSERT INTO mfai_app.instagram_accounts (client_id, ig_user_id, username, active)
+                  VALUES (:client_id, :ig_user_id, :username, TRUE)
+                  ON CONFLICT (ig_user_id) DO UPDATE SET username = EXCLUDED.username, active = TRUE
+                  RETURNING id
+                """), {"client_id": client_id, "ig_user_id": data.ig_user_id, "username": data.username}
+            )).scalar_one()
+
+            await conn.execute(text("UPDATE mfai_app.tokens SET active = FALSE WHERE ig_account_id = :ig AND active = TRUE"),
+                               {"ig": ig_account_id})
+
+            await conn.execute(text("""
+              INSERT INTO mfai_app.tokens (ig_account_id, access_token, expires_at, long_lived, active)
+              VALUES (:ig_account_id, :token, :exp, TRUE, TRUE)
+            """), {"ig_account_id": ig_account_id, "token": data.token, "exp": exp})
+
+            await conn.execute(text("""
+              INSERT INTO mfai_app.message_logs (ig_account_id, direction, payload)
+              VALUES (:id, 'in', :p)
+            """), {"id": ig_account_id, "p": f"Saved token (len={len(data.token)})"})
+
+        return {"status":"ok","client_id":client_id,"ig_account_id":ig_account_id,"expires_at":exp.isoformat()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{e.__class__.__name__}: {e}")
+
+@app.get("/tokens/active")
+async def get_active_token(ig_user_id: str):
+    q = text("""
+        SELECT t.access_token, t.expires_at
+        FROM mfai_app.tokens t
+        JOIN mfai_app.instagram_accounts ia ON ia.id = t.ig_account_id
+        WHERE ia.ig_user_id = :ig AND t.active = TRUE
+        ORDER BY t.created_at DESC
+        LIMIT 1
+    """)
+    async with engine.connect() as conn:
+        row = (await conn.execute(q, {"ig": ig_user_id})).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Nessun token attivo trovato")
+    return {"ig_user_id": ig_user_id, "access_token": row[0], "expires_at": row[1]}
+
+@app.post("/tokens/refresh", dependencies=[Depends(require_api_key)])
+async def refresh_token(data: RefreshTokenPayload):
+    exp = datetime.now(timezone.utc) + timedelta(days=data.expires_in_days)
+    async with engine.begin() as conn:
+        row = (await conn.execute(
+            text("SELECT id FROM mfai_app.instagram_accounts WHERE ig_user_id = :ig AND active = TRUE LIMIT 1"),
+            {"ig": data.ig_user_id},
+        )).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Instagram account non trovato")
+        ig_account_id = row[0]
+        await conn.execute(text("UPDATE mfai_app.tokens SET active = FALSE WHERE ig_account_id = :id AND active = TRUE"),
+                           {"id": ig_account_id})
+        await conn.execute(text("""
+          INSERT INTO mfai_app.tokens (ig_account_id, access_token, expires_at, long_lived, active)
+          VALUES (:ig, :token, :exp, TRUE, TRUE)
+        """), {"ig": ig_account_id, "token": data.token, "exp": exp})
+    return {"status": "ok", "ig_user_id": data.ig_user_id, "expires_at": exp.isoformat()}
+# --- MF.AI: mount routers (admin, prompts, webhook, admin UI classica) ---
+from app.routers.meta_webhook import router as meta_webhook_router
+from app.routers import admin_api, admin_prompts
+from app.admin_ui.routes import router as admin_ui_router
+
+# Monta i router (una sola volta)
+try:
+    app.include_router(meta_webhook_router)
+    app.include_router(admin_api.router)
+    app.include_router(admin_prompts.router)
+    app.include_router(admin_ui_router)
+except Exception:
+    # Se già montati in hot-reload, ignora
+    pass
+
+# Basic home/health (idempotenti)
+try:
+    @app.get("/")
+    def _home():
+        return {"ok": True, "app": "MF.AI"}
+except Exception:
+    pass
+
+try:
+    @app.get("/health")
+    def _health():
+        return {"ok": True}
+except Exception:
+    pass
+# -------- UI2X: variante sicura con Create/Delete clienti --------
+from fastapi.responses import Response
+
+@app.get("/ui2x", response_class=HTMLResponse)
+def ui2x_page():
+    return """<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>MF.AI — Clienti (UI2X)</title>
+  <link rel="stylesheet" href="/ui2.css">
+</head>
+<body>
+  <div id="app"></div>
+  <script src="/ui2x.js" defer></script>
+</body>
+</html>"""
+
+@app.get("/ui2x.js")
+def ui2x_js():
+    JS = '''(function(){
+  var api = {
+    clients: '/admin/clients',
+    accounts: '/admin/accounts',
+    tokens: '/admin/tokens',
+    logs: '/admin/logs',
+    prompts: function(cid){ return '/ui2/prompts/'+cid; },
+    adminUI: '/admin/ui'
+  };
+
+  var state = {clients:[], accounts:[], tokens:[], selected:null};
+  function $(s, el){ return (el||document).querySelector(s); }
+  function j(u,o){
+    o = o||{}; o.credentials = 'include';
+    return fetch(u,o).then(function(r){
+      if(!r.ok) return r.text().then(function(t){ throw new Error('HTTP '+r.status+' '+r.statusText+' on '+u+'\\n'+t); });
+      var ct = (r.headers.get('content-type')||''); return ct.indexOf('application/json')>=0 ? r.json() : r.text();
+    });
+  }
+  function esc(s){ s=(s==null?'':String(s)); return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+  var root = document.getElementById('app');
+  root.innerHTML =
+    '<aside class="side">'
+    + '<div class="brand">MF.AI — Clienti</div>'
+    + '<div class="search"><input id="q" placeholder="Cerca cliente…"></div>'
+    + '<div id="list" class="list"><div class="card empty">Carico clienti…</div></div>'
+    + '</aside>'
+    + '<main class="main">'
+    + '  <div class="bar">'
+    + '    <div style="display:flex;align-items:center;gap:8px">'
+    + '      <div id="crumb" class="crumb">Nessun cliente</div>'
+    + '      <span id="hint" class="hint"></span>'
+    + '    </div>'
+    + '    <div class="group">'
+    + '      <button id="btn-new" class="primary">+ Nuovo cliente</button>'
+    + '      <a href="/admin/ui" target="_blank"><button>Admin classico</button></a>'
+    + '    </div>'
+    + '  </div>'
+    + '  <div id="detail" class="content"><div class="card empty">Seleziona un cliente.</div></div>'
+    + '</main>';
+
+  function boot(){
+    $('#hint').textContent = 'Carico…';
+    Promise.all([ j(api.clients), j(api.accounts), j(api.tokens).catch(function(){return[];}) ])
+    .then(function(arr){
+      state.clients=arr[0]; state.accounts=arr[1]; state.tokens=arr[2];
+      renderList(); $('#hint').textContent='Clienti: '+state.clients.length;
+      $('#q').addEventListener('input', function(e){ renderList(e.target.value); });
+      $('#btn-new').addEventListener('click', openCreateForm);
+    }).catch(showFatal);
+  }
+
+  function renderList(f){
+    f=f||''; var box=$('#list'); box.innerHTML='';
+    var q = String(f).trim().toLowerCase();
+    var items = state.clients.filter(function(c){
+      var s=((c.id||'')+' '+(c.name||'')+' '+(c.email||'')+' '+(c.company||'')).toLowerCase();
+      return !q || s.indexOf(q)!==-1;
+    });
+    items.forEach(function(c){
+      var acc = state.accounts.find(function(a){ return a.client_id===c.id; });
+      var el = document.createElement('div');
+      var username = acc? '@'+esc(acc.username) : '—';
+      var botEnabled = acc && acc.bot_enabled ? 'ON' : 'OFF';
+      el.className='item'+(state.selected===c.id?' active':'');
+      el.innerHTML='<h4>'+esc(c.name||'(senza nome)')+'</h4>'
+                  +'<div class="meta">ID '+esc(c.id)+' • '+esc(c.email||'no email')+' • '+esc(username)+' • BOT '+botEnabled+'</div>';
+      el.addEventListener('click', function(){ selectClient(c.id); });
+      box.appendChild(el);
+    });
+    if(items.length===0){ var empty=document.createElement('div'); empty.className='card empty'; empty.textContent='Nessun risultato.'; box.appendChild(empty); }
+  }
+
+  function selectClient(id){
+    state.selected=id; var c = state.clients.find(function(x){return x.id===id;});
+    $('#crumb').textContent = c ? (c.name||('Cliente '+id)) : 'Nessun cliente';
+    renderDetail(c); renderList($('#q').value);
+  }
+
+  function renderDetail(c){
+    var box=$('#detail');
+    if(!c){ box.innerHTML='<div class="card empty">Seleziona un cliente.</div>'; return; }
+    var acc = state.accounts.find(function(a){return a.client_id===c.id;});
+    var html='';
+    html+='<div class="card"><div class="headerline"><div class="title">Dettagli cliente</div>'
+        + '<div class="group"><button id="btn-del" class="danger" title="Elimina definitivamente">Elimina</button></div></div>'
+        + '<div class="row"><div class="kv"><b>ID</b>&nbsp;'+esc(c.id)+'</div>'
+        + '<div class="kv"><b>Nome</b>&nbsp;'+esc(c.name||'—')+'</div>'
+        + '<div class="kv"><b>Email</b>&nbsp;'+esc(c.email||'—')+'</div>'
+        + (acc? '<div class="kv"><b>IG</b>&nbsp;@'+esc(acc.username||'')+'</div>' : '')
+        + (acc? '<div class="kv"><b>BOT</b>&nbsp;'+(acc.bot_enabled?'ON':'OFF')+'</div>' : '')
+        + '</div></div>';
+
+    html+='<div class="card"><div class="headerline"><div class="title">Prompt AI</div></div>'
+        + '<div class="row"><textarea id="ta-prompt" rows="8" placeholder="Prompt di sistema…"></textarea></div>'
+        + '<div class="row"><button id="btn-save-prompt" class="primary">Salva prompt</button></div>'
+        + '</div>';
+
+    box.innerHTML=html;
+
+    j('/ui2/prompts/'+c.id).then(function(r){ $('#ta-prompt').value=(r&&r.prompt)? r.prompt : ''; }).catch(function(){});
+
+    $('#btn-save-prompt').addEventListener('click', function(){
+      j('/ui2/prompts/'+c.id, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({prompt: $('#ta-prompt').value||''})})
+        .then(function(){ flash('Prompt salvato'); })
+        .catch(function(err){ alert('Errore salvataggio prompt:\\n'+err.message); });
+    });
+
+    $('#btn-del').addEventListener('click', function(){
+      if(!confirm('Eliminare definitivamente "'+(c.name||('ID '+c.id))+'"?')) return;
+      var delBody = j(api.clients, {method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id:c.id})});
+      delBody.catch(function(){ return j(api.clients+'/'+c.id, {method:'DELETE'}); })
+      .then(function(){
+        flash('Cliente eliminato');
+        state.clients = state.clients.filter(function(x){ return x.id!==c.id; });
+        state.selected=null; renderList($('#q').value); renderDetail(null);
+      }).catch(function(err){ alert('Errore eliminazione:\\n'+err.message); });
+    });
+  }
+
+  function openCreateForm(){
+    var box=$('#detail');
+    var card=document.createElement('div'); card.className='card';
+    card.innerHTML='<div class="headerline"><div class="title">Nuovo cliente</div></div>'
+      + '<div class="row"><input id="new-name" type="text" placeholder="Nome azienda o referente"></div>'
+      + '<div class="row"><input id="new-email" type="text" placeholder="Email (opzionale)"></div>'
+      + '<div class="row"><button id="btn-create" class="primary">Crea</button></div>';
+    box.innerHTML=''; box.appendChild(card); $('#crumb').textContent='Nuovo cliente';
+
+    $('#btn-create').addEventListener('click', function(){
+      var name=($('#new-name').value||'').trim(); var email=($('#new-email').value||'').trim();
+      if(!name){ alert('Inserisci un nome cliente'); return; }
+      j(api.clients, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(email? {name:name,email:email}:{name:name})})
+      .then(function(created){
+        flash('Cliente creato');
+        return j(api.clients).then(function(c){
+          state.clients=c;
+          var found = c.find(function(x){ return (created&&created.id)? x.id===created.id : (x.name===name && x.email===email); });
+          if(found){ selectClient(found.id); } else { renderList($('#q').value); }
+        });
+      }).catch(function(err){ alert('Errore creazione:\\n'+err.message); });
+    });
+  }
+
+  function flash(msg){ var h=$('#hint'), old=h.textContent; h.textContent=msg; setTimeout(function(){ h.textContent=old; },1400); }
+  function showFatal(err){
+    var box=$('#detail'); box.innerHTML='<div class="card"><div class="title">Errore</div><div class="log"></div></div>';
+    box.querySelector('.log').textContent=(err&&err.stack)? err.stack : (''+err);
+  }
+
+  boot();
+})();'''
+    return Response(JS, media_type="application/javascript")
