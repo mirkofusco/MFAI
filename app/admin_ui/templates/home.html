@@ -20,8 +20,14 @@
   <div class="alert alert-danger">Database non disponibile.</div>
 {% elif err == 'api_key_invalid' %}
   <div class="alert alert-danger">API key non valida.</div>
+{% elif err == 'missing_api_key' %}
+  <div class="alert alert-danger">Manca la API_KEY lato server. Imposta la variabile d'ambiente <code>API_KEY</code>.</div>
+{% elif err and err.startswith('token_refresh_failed_') %}
+  <div class="alert alert-danger">Salvataggio token fallito ({{ err }}). Controlla i log per il dettaglio.</div>
 {% elif err == 'token_refresh_failed' %}
   <div class="alert alert-danger">Aggiornamento token fallito.</div>
+{% elif err == 'missing_token' %}
+  <div class="alert alert-danger">Inserisci IG User ID e PAGE TOKEN validi.</div>
 {% endif %}
 
 <div class="card shadow-sm mb-3">
@@ -36,6 +42,7 @@
   <a class="btn btn-outline-secondary btn-sm" href="/admin/prompts-ui">Gestisci Prompts</a>
 </div>
 
+<!-- ========== Sezione: Aggiungi cliente ========== -->
 <div class="card shadow-sm mb-4">
   <div class="card-body">
     <h2 class="h5 mb-3">Aggiungi cliente</h2>
@@ -68,7 +75,9 @@
     </form>
   </div>
 </div>
+<!-- ========== /Fine sezione aggiungi cliente ========== -->
 
+<!-- ========== Sezione: Clienti ========== -->
 <div class="card shadow-sm">
   <div class="card-body">
     <h2 class="h5 mb-3">Clienti</h2>
@@ -119,5 +128,40 @@
     {% endif %}
   </div>
 </div>
+<!-- ========== /Fine sezione clienti ========== -->
+
+<!-- ========== Sezione: Salva / Aggiorna PAGE TOKEN IG ========== -->
+<div class="card shadow-sm mt-4">
+  <div class="card-body">
+    <h2 class="h5 mb-3">Salva / Aggiorna PAGE TOKEN Instagram</h2>
+
+    <form action="/ui2/tokens/refresh" method="post" class="row g-3">
+      <div class="col-md-4">
+        <label class="form-label" for="ig_user_id">IG User ID *</label>
+        <input id="ig_user_id" name="ig_user_id" type="text" class="form-control" placeholder="1784..." required>
+      </div>
+
+      <div class="col-md-8">
+        <label class="form-label" for="token">PAGE TOKEN *</label>
+        <input id="token" name="token" type="text" class="form-control" placeholder="EAAB..." required>
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label" for="username">Username IG (opz.)</label>
+        <input id="username" name="username" type="text" class="form-control" placeholder="es. azienda.ig">
+      </div>
+
+      <div class="col-12">
+        <button type="submit" class="btn btn-primary">Salva token</button>
+      </div>
+    </form>
+
+    <p class="text-muted small mt-2 mb-0">
+      Usa il <strong>Page Access Token</strong> della pagina Facebook collegata all’account Instagram Business.
+      Se non conosci l’IG User ID, puoi ottenerlo con <code>GET /{PAGE_ID}?fields=connected_instagram_account</code>.
+    </p>
+  </div>
+</div>
+<!-- ========== /Fine sezione token ========== -->
 
 {% endblock %}
