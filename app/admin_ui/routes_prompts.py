@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.database import get_db  # deve esistere già
+from app.db_session import get_session as get_db
 from app.models import Client     # contiene la colonna clients.ai_prompt
 
 router = APIRouter(prefix="/admin", tags=["admin:prompts"])

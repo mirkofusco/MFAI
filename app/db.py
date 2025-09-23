@@ -1,16 +1,16 @@
 import os
 from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.orm import DeclarativeBase
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./dev.db").strip()
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL non impostata nelle variabili d'ambiente")
 
-def connect_args_for(url: str):
-    # Non passiamo 'ssl' a mano: per Postgres usa ?sslmode=require nel DSN
-    return {}
+class Base(DeclarativeBase):
+    pass
 
 engine = create_async_engine(
     DATABASE_URL,
-    echo=False,
     future=True,
     pool_pre_ping=True,
-    connect_args=connect_args_for(DATABASE_URL),
 )

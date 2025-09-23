@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, String, Boolean
-from app.database import Base
+from app.db import Base
 from pydantic import BaseModel
 
 # ✅ Modello per il database (tabella clients)
@@ -42,7 +42,7 @@ class MessageCreate(BaseModel):
 
 # --- Prompt model (added) ---
 from sqlalchemy import Column, BigInteger, Text, DateTime, func
-from app.database import Base
+from app.db import Base
 
 class Prompt(Base):
     __tablename__ = "prompts"

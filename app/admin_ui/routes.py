@@ -25,7 +25,7 @@ try:
     from app.db import engine
 except Exception:
     try:
-        from app.database import engine
+        from app.db import engine
     except Exception:
         engine = None
 
