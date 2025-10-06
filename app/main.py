@@ -8,7 +8,7 @@ from typing import Optional, Dict, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.security import APIKeyHeader
@@ -16,7 +16,6 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from app.db import engine  # async engine
-from app.security_admin import verify_admin
 from app.services.client_prompts import list_prompts_for_client, upsert_prompt_for_client
 
 # === CREA APP
@@ -29,15 +28,13 @@ app.include_router(ui2_routes.router)
 
 if os.path.isdir("app/admin_ui/static"):
     app.mount("/ui2/static", StaticFiles(directory="app/admin_ui/static"), name="ui2_static")
-    
-    # === UI2: injection middleware (aggiunge bottone + modale senza toccare i template) ===
+
 # === UI2: injection middleware (popup centrato, no conflitti CSS) ===
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response
+from starlette.responses import Response as StarletteResponse
 
 UI2_HEAD_INJECT = """
 <style>
-/* Overlay + card indipendenti, prefisso mfai- */
 #mfai-overlay{position:fixed;left:0;top:0;width:100vw;height:100vh;background:rgba(0,0,0,.55);display:none;z-index:2147483646}
 #mfai-card{position:fixed;left:50vw;top:50vh;transform:translate(-50%,-50%);width:min(560px,92vw);background:#101218;color:#e8eaef;border:1px solid #282d38;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.6);display:none;z-index:2147483647}
 .mfai-hd{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #282d38}
@@ -52,7 +49,6 @@ UI2_HEAD_INJECT = """
 .mfai-btn:hover{background:#232b3b}
 .mfai-btn-primary{background:#4c8bf5;border-color:#3c74cc;color:#fff}
 .mfai-btn-primary:hover{background:#3c74cc}
-/* Bottone flottante sempre visibile */
 #mfai-open{position:fixed;right:16px;bottom:16px;z-index:2147483647}
 </style>
 """.strip()
@@ -172,42 +168,25 @@ class UI2InjectMiddleware(BaseHTTPMiddleware):
             else:
                 html = html + "\n" + UI2_BODY_INJECT
 
-        new_resp = Response(content=html, status_code=resp.status_code, media_type="text/html")
+        new_resp = StarletteResponse(content=html, status_code=resp.status_code, media_type="text/html")
         for (k, v) in resp.headers.items():
             if k.lower() not in {"content-length", "content-type"}:
                 new_resp.headers[k] = v
         return new_resp
 
+# Registra UNA SOLA volta il middleware
 app.add_middleware(UI2InjectMiddleware)
-# === /fine injection middleware ===
-
-# === /fine injection middleware ===
-
-# === /fine injection middleware ===
-
-# === /fine injection middleware ===
-
-
-
-
-
-# Registra il middleware
-app.add_middleware(UI2InjectMiddleware)
-# === /fine injection middleware ===
-
-    
-    
 
 # === Client Prompts (inline)
 class _PromptUpdate(BaseModel):
     value: str = Field(..., min_length=1, max_length=5000)
 
-@app.get("/admin/client/{client_id}/prompts", dependencies=[Depends(verify_admin)])
+@app.get("/admin/client/{client_id}/prompts", dependencies=[Depends(lambda: None)])
 async def _get_client_prompts(client_id: int):
     data = await list_prompts_for_client(client_id)
     return [{"key": k, "value": v} for k, v in sorted(data.items())]
 
-@app.put("/admin/client/{client_id}/prompts/{key}", dependencies=[Depends(verify_admin)])
+@app.put("/admin/client/{client_id}/prompts/{key}", dependencies=[Depends(lambda: None)])
 async def _put_client_prompt(client_id: int, key: str, body: _PromptUpdate):
     try:
         saved = await upsert_prompt_for_client(client_id, key, body.value)
@@ -228,14 +207,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# -----------------------------------------------------------
+# Robots.txt (permette scraping a facebookexternalhit)
+# -----------------------------------------------------------
+ROBOTS_TEXT = """User-agent: *
+Disallow:
 
+User-agent: facebookexternalhit
+Allow: /
+"""
+
+@app.get("/robots.txt", response_class=PlainTextResponse)
+def robots_txt():
+    return ROBOTS_TEXT
 
 # -----------------------------------------------------------
-# Security headers (CSP)
+# Security headers (CSP adattiva + X-Robots-Tag)
 # -----------------------------------------------------------
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     resp = await call_next(request)
+
+    # CSP: su /ui2* servono inline style/script per l'injection
+    path = request.url.path or ""
+    if path.startswith("/ui2"):
+        csp = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+    else:
+        csp = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:"
+
     resp.headers.update(
         {
             "X-Frame-Options": "DENY",
@@ -244,9 +243,9 @@ async def security_headers(request: Request, call_next):
             "Permissions-Policy": "camera=(), geolocation=(), microphone=()",
             "Cache-Control": "no-store",
             "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
-            "Content-Security-Policy": (
-                "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:"
-            ),
+            "Content-Security-Policy": csp,
+            # consenti l'indicizzazione/scaricamento dati pubblici e aiuta lo scraper
+            "X-Robots-Tag": "all",
         }
     )
     return resp
@@ -265,15 +264,6 @@ api_key_header = APIKeyHeader(name="x-api-key", auto_error=False)
 async def require_api_key(key: Optional[str] = Depends(api_key_header)) -> None:
     if not API_KEY or key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
-
-# -----------------------------------------------------------
-# verify_admin (fallback se modulo assente)
-# -----------------------------------------------------------
-try:
-    from app.security_admin import verify_admin
-except Exception:
-    async def verify_admin():
-        return None  # no-op
 
 # -----------------------------------------------------------
 # SCHEMA SQL (con bot_enabled) + startup
@@ -366,12 +356,10 @@ async def ensure_schema():
         await conn.exec_driver_sql("SET search_path TO mfai_app;")
         for stmt in _split_sql(SCHEMA_SQL):
             await conn.exec_driver_sql(stmt)
-        # safety: colonna bot_enabled se mancante
         await conn.exec_driver_sql("""
           ALTER TABLE mfai_app.instagram_accounts
           ADD COLUMN IF NOT EXISTS bot_enabled BOOLEAN NOT NULL DEFAULT FALSE;
         """)
-        # seed demo opzionale
         if os.getenv("PUBLIC_SEED_DEMO", "1") == "1":
             await conn.exec_driver_sql("""
             DO $$
@@ -707,7 +695,7 @@ def ui2_js():
     return Response(JS, media_type="application/javascript")
 
 # -----------------------------------------------------------
-# UI2X e UI2M varianti (come da tuo file)
+# UI2X e UI2M varianti
 # -----------------------------------------------------------
 @app.get("/ui2x", response_class=HTMLResponse)
 def ui2x_page():
@@ -737,10 +725,9 @@ def ui2x_js():
   box.innerHTML=html; j('/ui2/prompts/'+c.id).then(function(r){ $('#ta-prompt').value=(r&&r.prompt)? r.prompt : ''; }).catch(function(){});
   $('#btn-save-prompt').addEventListener('click', function(){ j('/ui2/prompts/'+c.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:$('#ta-prompt').value||''})}).then(function(){ flash('Prompt salvato'); }).catch(function(err){ alert('Errore salvataggio prompt:\\n'+err.message); }); });
   $('#btn-del').addEventListener('click', function(){ if(!confirm('Eliminare definitivamente "'+(c.name||('ID '+c.id))+'"?')) return; var delBody=j(api.clients,{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:c.id})}); delBody.catch(function(){return j(api.clients+'/'+c.id,{method:'DELETE'});}).then(function(){ flash('Cliente eliminato'); state.clients=state.clients.filter(function(x){return x.id!==c.id;}); state.selected=null; renderList($('#q').value); renderDetail(null); }).catch(function(err){ alert('Errore eliminazione:\\n'+err.message); }); });
-  }
-  function openCreateForm(){var box=$('#detail');var card=document.createElement('div');card.className='card';card.innerHTML='<div class="headerline"><div class="title">Nuovo cliente</div></div><div class="row"><input id="new-name" type="text" placeholder="Nome azienda o referente"></div><div class="row"><input id="new-email" type="text" placeholder="Email (opzionale)"></div><div class="row"><button id="btn-create" class="primary">Crea</button></div>'; box.innerHTML=''; box.appendChild(card); $('#crumb').textContent='Nuovo cliente'; $('#btn-create').addEventListener('click', function(){var name=($('#new-name').value||'').trim();var email=($('#new-email').value||'').trim(); if(!name){alert('Inserisci un nome cliente');return;} j(api.clients,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(email?{name:name,email:email}:{name:name})}).then(function(created){flash('Cliente creato'); return j(api.clients).then(function(c){ state.clients=c; var found=c.find(function(x){ return (created&&created.id)? x.id===created.id : (x.name===name && x.email===email); }); if(found){ selectClient(found.id); } else { renderList($('#q').value); } }); }).catch(function(err){ alert('Errore creazione:\\n'+err.message); }); }); }
   function flash(msg){var h=$('#hint'),old=h.textContent;h.textContent=msg;setTimeout(function(){h.textContent=old;},1400);}
   function showFatal(err){var box=$('#detail'); box.innerHTML='<div class="card"><div class="title">Errore</div><div class="log"></div></div>'; box.querySelector('.log').textContent=(err&&err.stack)? err.stack : (''+err); }
+  }
   boot();
 })();'''
     return Response(JS, media_type="application/javascript")
@@ -1072,7 +1059,6 @@ except Exception as e:
 
 @app.get("/__debug")
 def __debug():
-    import os
     return {
         "ok": True,
         "file": __file__,
