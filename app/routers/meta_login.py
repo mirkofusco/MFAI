@@ -193,6 +193,7 @@ async def meta_callback(request: Request):
 
 @router.post("/meta/save", response_class=HTMLResponse)
 async def meta_save(
+    request: Request,
     payload_json: str = Form(...),
     client_name: Optional[str] = Form(None),
     client_email: Optional[str] = Form(None),
@@ -218,9 +219,13 @@ async def meta_save(
         "client_email": (client_email or None),
     }
 
+    # Costruisci la target URL: usa BASE_URL se presente, altrimenti l'origin della richiesta
+    origin = f"{request.url.scheme}://{request.url.netloc}"
+    target_url = f"{(BASE_URL or origin).rstrip('/')}/save-token"
+
     try:
-        async with httpx.AsyncClient(timeout=15.0, base_url=(BASE_URL or "")) as client:
-            resp = await client.post("/save-token", json=body, headers={"x-api-key": API_KEY})
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(target_url, json=body, headers={"x-api-key": API_KEY})
         if resp.status_code >= 400:
             return HTMLResponse(
                 f"<h3>Save failed</h3><pre>Status: {resp.status_code}\n{h(resp.text[:1000])}</pre>",
@@ -229,5 +234,4 @@ async def meta_save(
     except Exception as e:
         return HTMLResponse(f"<h3>Save failed</h3><pre>{h(e)}</pre>", status_code=500)
 
-    # Torna alla dashboard con toast di successo
     return RedirectResponse(url="/ui2?ok=token_refreshed", status_code=302)
