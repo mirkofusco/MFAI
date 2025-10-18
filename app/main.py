@@ -695,100 +695,6 @@ def ui2_js():
     return Response(JS, media_type="application/javascript")
 
 # -----------------------------------------------------------
-# UI2X e UI2M varianti
-# -----------------------------------------------------------
-@app.get("/ui2x", response_class=HTMLResponse)
-def ui2x_page():
-    return """<!doctype html><html lang="it"><head><meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>MF.AI — Clienti (UI2X)</title>
-<link rel="stylesheet" href="/ui2.css"></head>
-<body><div id="app"></div><script src="/ui2x.js" defer></script></body></html>"""
-
-@app.get("/ui2x.js")
-def ui2x_js():
-    JS = '''(function(){
-  var api={clients:'/admin/clients',accounts:'/admin/accounts',tokens:'/admin/tokens',logs:'/admin/logs',
-           prompts:function(cid){return '/ui2/prompts/'+cid;},adminUI:'/admin/ui'};
-  var state={clients:[],accounts:[],tokens:[],selected:null};
-  function $(s,el){return (el||document).querySelector(s);}
-  function j(u,o){o=o||{};o.credentials='include';return fetch(u,o).then(function(r){if(!r.ok)return r.text().then(function(t){throw new Error('HTTP '+r.status+' '+r.statusText+' on '+u+'\\n'+t);});var ct=(r.headers.get('content-type')||'');return ct.indexOf('application/json')>=0?r.json():r.text();});}
-  function esc(s){s=(s==null?'':String(s));return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
-  var root=document.getElementById('app');
-  root.innerHTML='<aside class="side"><div class="brand">MF.AI — Clienti</div><div class="search"><input id="q" placeholder="Cerca cliente…"></div><div id="list" class="list"><div class="card empty">Carico clienti…</div></div></aside>'
-  + '<main class="main"><div class="bar"><div style="display:flex;align-items:center;gap:8px"><div id="crumb" class="crumb">Nessun cliente</div><span id="hint" class="hint"></span></div><div class="group"><button id="btn-new" class="primary">+ Nuovo cliente</button><a href="/admin/ui" target="_blank"><button>Admin classico</button></a></div></div><div id="detail" class="content"><div class="card empty">Seleziona un cliente.</div></div></main>';
-  function boot(){ $('#hint').textContent='Carico…'; Promise.all([j(api.clients),j(api.accounts),j(api.tokens).catch(function(){return[];})]).then(function(a){state.clients=a[0];state.accounts=a[1];state.tokens=a[2];renderList();$('#hint').textContent='Clienti: '+state.clients.length;$('#q').addEventListener('input',function(e){renderList(e.target.value);});$('#btn-new').addEventListener('click',openCreateForm);}).catch(showFatal); }
-  function renderList(f){f=f||'';var box=$('#list');box.innerHTML='';var q=String(f).trim().toLowerCase();var items=state.clients.filter(function(c){var s=((c.id||'')+' '+(c.name||'')+' '+(c.email||'')+' '+(c.company||'')).toLowerCase();return !q||s.indexOf(q)!==-1;});items.forEach(function(c){var acc=state.accounts.find(function(a){return a.client_id===c.id;});var el=document.createElement('div');var username=acc?'@'+esc(acc.username):'—';var botEnabled=acc&&acc.bot_enabled?'ON':'OFF';el.className='item'+(state.selected===c.id?' active':'');el.innerHTML='<h4>'+esc(c.name||'(senza nome)')+'</h4>'+'<div class="meta">ID '+esc(c.id)+' • '+esc(c.email||'no email')+' • '+esc(username)+' • BOT '+botEnabled+'</div>';el.addEventListener('click',function(){selectClient(c.id);});box.appendChild(el);});if(items.length===0){var empty=document.createElement('div');empty.className='card empty';empty.textContent='Nessun risultato.';box.appendChild(empty);} }
-  function selectClient(id){state.selected=id;var c=state.clients.find(function(x){return x.id===id;});$('#crumb').textContent=c?(c.name||('Cliente '+id)):'Nessun cliente';renderDetail(c);renderList($('#q').value);}
-  function renderDetail(c){var box=$('#detail');if(!c){box.innerHTML='<div class="card empty">Seleziona un cliente.</div>';return;}var acc=state.accounts.find(function(a){return a.client_id===c.id;});var html='';html+='<div class="card"><div class="headerline"><div class="title">Dettagli cliente</div><div class="group"><button id="btn-del" class="danger" title="Elimina definitivamente">Elimina</button></div></div><div class="row"><div class="kv"><b>ID</b>&nbsp;'+esc(c.id)+'</div><div class="kv"><b>Nome</b>&nbsp;'+esc(c.name||'—')+'</div><div class="kv"><b>Email</b>&nbsp;'+esc(c.email||'—')+'</div>'+(acc?'<div class="kv"><b>IG</b>&nbsp;@'+esc(acc.username||'')+'</div>':'')+(acc?'<div class="kv"><b>BOT</b>&nbsp;'+(acc.bot_enabled?'ON':'OFF')+'</div>':'')+'</div></div>';
-  html+='<div class="card"><div class="headerline"><div class="title">Prompt AI</div></div><div class="row"><textarea id="ta-prompt" rows="8" placeholder="Prompt di sistema…"></textarea></div><div class="row"><button id="btn-save-prompt" class="primary">Salva prompt</button></div></div>';
-  box.innerHTML=html; j('/ui2/prompts/'+c.id).then(function(r){ $('#ta-prompt').value=(r&&r.prompt)? r.prompt : ''; }).catch(function(){});
-  $('#btn-save-prompt').addEventListener('click', function(){ j('/ui2/prompts/'+c.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:$('#ta-prompt').value||''})}).then(function(){ flash('Prompt salvato'); }).catch(function(err){ alert('Errore salvataggio prompt:\\n'+err.message); }); });
-  $('#btn-del').addEventListener('click', function(){ if(!confirm('Eliminare definitivamente "'+(c.name||('ID '+c.id))+'"?')) return; var delBody=j(api.clients,{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:c.id})}); delBody.catch(function(){return j(api.clients+'/'+c.id,{method:'DELETE'});}).then(function(){ flash('Cliente eliminato'); state.clients=state.clients.filter(function(x){return x.id!==c.id;}); state.selected=null; renderList($('#q').value); renderDetail(null); }).catch(function(err){ alert('Errore eliminazione:\\n'+err.message); }); });
-  function flash(msg){var h=$('#hint'),old=h.textContent;h.textContent=msg;setTimeout(function(){h.textContent=old;},1400);}
-  function showFatal(err){var box=$('#detail'); box.innerHTML='<div class="card"><div class="title">Errore</div><div class="log"></div></div>'; box.querySelector('.log').textContent=(err&&err.stack)? err.stack : (''+err); }
-  }
-  boot();
-})();'''
-    return Response(JS, media_type="application/javascript")
-
-@app.get("/ui2m", response_class=HTMLResponse)
-def ui2m_page():
-    return """<!doctype html><html lang="it"><head><meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>MF.AI — Gestione Clienti (UI2M)</title>
-<link rel="stylesheet" href="/ui2.css"></head>
-<body><div id="app"></div><script src="/ui2m.js" defer></script></body></html>"""
-
-@app.get("/ui2m.js")
-def ui2m_js():
-    JS = '''(function(){
-      var api={clients:'/admin/clients',accounts:'/admin/accounts',tokens:'/admin/tokens'};
-      function $(s,el){return (el||document).querySelector(s);}
-      function j(u,o){o=o||{};o.credentials='include';return fetch(u,o).then(function(r){if(!r.ok)return r.text().then(function(t){throw new Error('HTTP '+r.status+' '+r.statusText+' on '+u+'\\n'+t);});var ct=(r.headers.get('content-type')||'');return ct.indexOf('application/json')>=0?r.json():r.text();});}
-      var root=document.getElementById('app');
-      root.innerHTML='<main class="main"><div class="bar"><div style="display:flex;gap:8px;align-items:center"><div class="crumb">Gestione Clienti</div><span id="hint" class="hint"></span></div><div class="group"><a href="/ui2"><button>Torna a UI2</button></a></div></div><div class="content">'
-      +'<div class="card"><div class="title">Nuovo cliente</div><div class="row"><input id="new-name" placeholder="Nome"></div><div class="row"><input id="new-email" placeholder="Email (opzionale)"></div><div class="row"><button id="btn-create" class="primary">Crea</button></div></div>'
-      +'<div class="card"><div class="title">Elimina cliente</div><div class="row"><input id="del-id" placeholder="ID cliente"></div><div class="row"><button id="btn-del" class="danger">Elimina</button></div><div class="hint">Operazione definitiva.</div></div>'
-      +'<div class="card"><div class="title">Collega Instagram (opzionale)</div><div class="row"><input id="ig-id" placeholder="ig_user_id (es. 1784…)"></div><div class="row"><input id="ig-username" placeholder="username (senza @)"></div><div class="row"><input id="ig-client" placeholder="client_id (ID cliente)"></div><div class="row"><label class="kv"><input id="ig-active" type="checkbox" checked> active</label><label class="kv"><input id="ig-bot" type="checkbox" checked> bot_enabled</label></div><div class="row"><button id="btn-link-ig">Collega/aggiorna</button></div></div>'
-      +'<div class="card"><div class="title">Token Instagram (opzionale)</div><div class="row"><input id="tok-ig" placeholder="ig_user_id (per associazione)"></div><div class="row"><textarea id="tok-value" rows="4" placeholder="Access token lungo…"></textarea></div><div class="row"><label class="kv"><input id="tok-long" type="checkbox" checked> long_lived</label></div><div class="row"><button id="btn-token">Salva token</button></div><div class="hint">Se POST /admin/tokens non è supportato in questa build, vedrai un errore.</div></div>'
-      +'</div></main>';
-      function flash(msg){var h=$('#hint'),old=h.textContent;h.textContent=msg;setTimeout(function(){h.textContent=old;},1400);}
-      document.getElementById('btn-create').addEventListener('click',function(){
-        var name=$('#new-name').value.trim(),email=$('#new-email').value.trim();
-        if(!name){alert('Inserisci un nome');return;}
-        j(api.clients,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(email?{name:name,email:email}:{name:name})})
-        .then(function(){flash('Cliente creato');$('#new-name').value='';$('#new-email').value='';})
-        .catch(function(e){alert('Errore creazione:\\n'+e.message);});
-      });
-      document.getElementById('btn-del').addEventListener('click',function(){
-        var id=($('#del-id').value||'').trim();if(!id){alert('Inserisci ID');return;}
-        if(!confirm('Eliminare definitivamente il cliente ID '+id+'?'))return;
-        j(api.clients+'/'+encodeURIComponent(id),{method:'DELETE'})
-          .catch(function(){return j(api.clients,{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:Number(id)})});})
-          .then(function(){flash('Cliente eliminato');$('#del-id').value='';})
-          .catch(function(e){alert('Errore eliminazione:\\n'+e.message);});
-      });
-      document.getElementById('btn-link-ig').addEventListener('click',function(){
-        var ig=$('#ig-id').value.trim(),user=$('#ig-username').value.trim(),cid=$('#ig-client').value.trim();
-        var active=$('#ig-active').checked,bot=$('#ig-bot').checked;
-        if(!ig||!user||!cid){alert('Compila ig_user_id, username e client_id');return;}
-        j(api.accounts+'/'+encodeURIComponent(ig),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({client_id:Number(cid),username:user,active:active,bot_enabled:bot})})
-        .catch(function(){return j(api.accounts,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ig_user_id:ig,username:user,client_id:Number(cid),active:active,bot_enabled:bot})});})
-        .then(function(){flash('Account IG aggiornato/creato');})
-        .catch(function(e){alert('Errore IG:\\n'+e.message);});
-      });
-      document.getElementById('btn-token').addEventListener('click',function(){
-        var ig=$('#tok-ig').value.trim(),tok=$('#tok-value').value.trim(),long=$('#tok-long').checked;
-        if(!ig||!tok){alert('Compila ig_user_id e token');return;}
-        j(api.tokens,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ig_user_id:ig,access_token:tok,long_lived:long})})
-        .then(function(){flash('Token salvato');$('#tok-value').value='';})
-        .catch(function(e){alert('Errore token:\\n'+e.message);});
-      });
-    })();'''
-    return Response(JS, media_type="application/javascript")
-
-# -----------------------------------------------------------
 # Admin JSON minimi che servono alla UI /ui2
 # -----------------------------------------------------------
 # 1) Clients (lista)
@@ -935,7 +841,7 @@ async def ui2_put_prompts(client_id: int, body: ClientPromptSystem):
     return {"status": "ok"}
 
 # -----------------------------------------------------------
-# OAuth callback (se serve)
+# OAuth callback (generico: per debug)
 # -----------------------------------------------------------
 @app.get("/oauth/callback")
 async def oauth_callback(request: Request):
@@ -1037,7 +943,7 @@ async def refresh_token(data: RefreshTokenPayload):
     return {"status": "ok", "ig_user_id": data.ig_user_id, "expires_at": exp.isoformat()}
 
 # -----------------------------------------------------------
-# Include router esterni opzionali (dopo app creata)
+# Include router esterni
 # -----------------------------------------------------------
 try:
     from app.routers.meta_webhook import router as meta_webhook_router
@@ -1051,12 +957,21 @@ try:
 except Exception as e:
     print("Admin routers non caricati:", e)
 
+# === Meta Login (OAuth) ===
 try:
-    from app.admin_ui.routes import router as admin_ui_router  # UI Admin “classica”
-    app.include_router(admin_ui_router)
+    from app.routers import meta_login
+    app.include_router(meta_login.router)
 except Exception as e:
-    print("Admin UI router non caricato:", e)
+    print("Meta login router non caricato:", e)
 
+# Alias comodo: /login -> /meta/login
+@app.get("/login", include_in_schema=False)
+def login_alias():
+    return Response(status_code=307, headers={"Location": "/meta/login"})
+
+# -----------------------------------------------------------
+# Debug
+# -----------------------------------------------------------
 @app.get("/__debug")
 def __debug():
     return {
