@@ -7,6 +7,7 @@ import os
 import html
 import json
 from typing import Dict, Any, Optional
+from urllib.parse import urlencode
 
 import httpx
 from fastapi import APIRouter, Request, HTTPException, Form
@@ -26,14 +27,15 @@ REDIRECT_URI = os.getenv(
 API_KEY = os.getenv("API_KEY", "").strip()
 BASE_URL = os.getenv("BASE_URL", "").strip()  # opzionale (se vuoto usa path locali)
 
-SCOPES = ",".join([
-    "pages_show_list",
+# === SCOPI CORRETTI (rimosso instagram_business_basic che è invalido) ===
+SCOPES = [
     "instagram_basic",
-    "instagram_business_basic",
-    "instagram_manage_messages",
+    "pages_show_list",
     "pages_manage_metadata",
-    "pages_messaging",
-])
+    "instagram_manage_messages",
+    # "pages_messaging",      # scommenta se invii messaggi via Pagina
+    # "business_management",  # scommenta se gestisci asset Business
+]
 
 def h(s: Any) -> str:
     return html.escape(str(s), quote=True)
@@ -42,17 +44,20 @@ def h(s: Any) -> str:
 async def meta_login():
     if not META_APP_ID or not META_APP_SECRET:
         return HTMLResponse("<h3>Missing META_APP_ID or META_APP_SECRET</h3>", status_code=500)
-    login_url = (
-        f"https://www.facebook.com/{GRAPH_VER}/dialog/oauth?"
-        f"client_id={META_APP_ID}"
-        f"&redirect_uri={h(REDIRECT_URI)}"
-        f"&scope={h(SCOPES)}"
-    )
+
+    params = {
+        "client_id": META_APP_ID,
+        "redirect_uri": REDIRECT_URI,              # verrà URL-encodata da urlencode
+        "scope": ",".join(SCOPES),
+        "state": "mfai_login_state",               # semplice anti-CSRF demo
+    }
+    login_url = f"https://www.facebook.com/{GRAPH_VER}/dialog/oauth?{urlencode(params)}"
+
     return HTMLResponse(f"""
     <html><body style="font-family:system-ui;max-width:760px;margin:40px auto;">
       <h1>MF.AI — Connect with Meta</h1>
       <p>This starts the end-to-end authorization flow required for review.</p>
-      <a href="{login_url}">
+      <a href="{h(login_url)}">
         <button style="padding:10px 16px;font-size:16px">Continue with Facebook</button>
       </a>
     </body></html>
@@ -63,8 +68,9 @@ async def meta_callback(request: Request):
     # 1) Code exchange
     code = request.query_params.get("code")
     error = request.query_params.get("error")
+    error_desc = request.query_params.get("error_description")
     if error:
-        return HTMLResponse(f"<h3>Login error</h3><pre>{h(error)}</pre>", status_code=400)
+        return HTMLResponse(f"<h3>Login error</h3><pre>{h(error)}: {h(error_desc or '')}</pre>", status_code=400)
     if not code:
         return HTMLResponse("<h3>Missing ?code</h3>", status_code=400)
 
@@ -81,7 +87,7 @@ async def meta_callback(request: Request):
         )
         token_data = token_resp.json()
         if "access_token" not in token_data:
-            return HTMLResponse(f"<h3>Token error</h3><pre>{h(token_data)}</pre>", status_code=400)
+            return HTMLResponse(f"<h3>Token error</h3><pre>{h(token_resp.text[:2000])}</pre>", status_code=400)
         user_access_token = token_data["access_token"]
 
         # 2) Long-lived user token
