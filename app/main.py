@@ -17,10 +17,15 @@ from sqlalchemy import text
 
 from app.db import engine  # async engine
 from app.services.client_prompts import list_prompts_for_client, upsert_prompt_for_client
+from app.routers import meta_webhook  # >>> ADD
+
 
 # === CREA APP
 APP_NAME = "MF.AI"
 app = FastAPI(title=APP_NAME)
+
+app.include_router(meta_webhook.router)  # >>> ADD
+
 
 # --- FORCE BASIC AUTH ON /ui2 (regardless of routes) ---
 import base64, hmac, os
@@ -1021,3 +1026,12 @@ def __debug():
 @app.get("/__routes")
 def __routes():
     return {"routes":[getattr(r, "path", None) for r in app.routes]}
+
+@app.on_event("shutdown")  # >>> ADD
+async def _shutdown_pool():
+    # chiude il client httpx riusato dal webhook Meta
+    await meta_webhook._close_httpx()
+  
+  
+  
+  

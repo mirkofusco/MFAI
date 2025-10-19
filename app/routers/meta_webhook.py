@@ -3,7 +3,7 @@ import os
 import json
 import logging
 from time import time
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Optional
 
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import PlainTextResponse, JSONResponse
@@ -69,6 +69,28 @@ def _mark_human(ig_user_id: str, user_id: str, ttl: int | None = None) -> None:
 
 def _clear_human(ig_user_id: str, user_id: str) -> None:
     _HUMAN_UNTIL.pop(_key(ig_user_id, user_id), None)
+
+# ------------------------------------------------------------------
+# HTTP client condiviso (HTTP/2 + keep-alive) per ridurre latenza
+# ------------------------------------------------------------------
+_HTTPX: Optional[httpx.AsyncClient] = None
+GRAPH_BASE = "https://graph.facebook.com/v21.0"  # v21.0
+
+def _httpx() -> httpx.AsyncClient:
+    global _HTTPX
+    if _HTTPX is None:
+        _HTTPX = httpx.AsyncClient(
+            http2=True,
+            timeout=httpx.Timeout(8.0, read=30.0),
+            limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
+        )
+    return _HTTPX
+
+async def _close_httpx():
+    global _HTTPX
+    if _HTTPX is not None:
+        await _HTTPX.aclose()
+        _HTTPX = None
 
 # ------------------------------------------------------------------
 # DB HELPERS (client_id, system prompt, bot flag, tokens, logs)
@@ -225,6 +247,15 @@ async def meta_webhook(request: Request):
                     pass
                 continue
 
+            # --- Page Token attivo (anticipato per typing_on) ---
+            page_token = await _get_active_page_token(ig_user_id)
+            if not page_token:
+                logger.warning("No active PAGE TOKEN for IG %s", ig_user_id)
+                continue
+
+            # --- Typing immediato non bloccante ---
+            asyncio.create_task(_send_typing_via_me(page_token, sender_id))
+
             # --- Conversational memory: aggiungi l'input utente alla sessione ---
             _sess_add(ig_user_id, sender_id, "user", text_msg)
 
@@ -243,12 +274,6 @@ async def meta_webhook(request: Request):
             except Exception as e:
                 logger.error("AI error: %s", e)
                 reply_text = _fallback_reply(text_msg)
-
-            # --- Page Token attivo ---
-            page_token = await _get_active_page_token(ig_user_id)
-            if not page_token:
-                logger.warning("No active PAGE TOKEN for IG %s", ig_user_id)
-                continue
 
             # --- Invio via /me/messages ---
             ok, resp = await _send_dm_via_me(page_token, sender_id, reply_text)
@@ -329,6 +354,8 @@ async def ai_reply_with_history(ig_user_id: str, user_id: str, system_override: 
         "temperature": 0.7,
         "max_tokens": 220,
     }
+    # Nota: qui lasciamo l'AsyncClient locale per non toccare altri pezzi;
+    # se vuoi, possiamo poi migrare anche questa chiamata al pool _httpx().
     timeout = httpx.Timeout(12.0, connect=6.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         r = await client.post("https://api.openai.com/v1/chat/completions",
@@ -347,34 +374,51 @@ async def ai_reply_with_history(ig_user_id: str, user_id: str, system_override: 
             return _fallback_reply(last_user)
 
 # ------------------------------------------------------------------
-# GRAPH HELPERS
+# GRAPH HELPERS (v21.0 + client riusato)
 # ------------------------------------------------------------------
 async def _take_thread_control(page_token: str, page_id: str, recipient_id: str) -> bool:
-    url = f"https://graph.facebook.com/v20.0/{page_id}/take_thread_control"
+    url = f"{GRAPH_BASE}/{page_id}/take_thread_control"  # v21.0
     params = {"access_token": page_token}
     payload = {"recipient": {"id": recipient_id}, "metadata": "mf.ai auto-take"}
-    timeout = httpx.Timeout(12.0, connect=6.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        r = await client.post(url, params=params, json=payload)
+    try:
+        r = await _httpx().post(url, params=params, json=payload)
+        j = r.json() if r.headers.get("content-type","").startswith("application/json") else {}
+        return (r.status_code == 200) and (j.get("success") is True)
+    except Exception as e:
+        logger.exception("take_thread_control error: %s", e)
+        return False
+
+async def _send_typing_via_me(page_token: str, recipient_id: str) -> Tuple[bool, Dict[str, Any]]:
+    url = f"{GRAPH_BASE}/me/messages"  # v21.0
+    params = {"access_token": page_token}
+    payload = {
+        "recipient": {"id": recipient_id},
+        "sender_action": "typing_on",
+    }
+    try:
+        r = await _httpx().post(url, params=params, json=payload)
         try:
-            j = r.json() if r.headers.get("content-type","").startswith("application/json") else {}
+            data = r.json()
         except Exception:
-            j = {}
-        return r.status_code == 200 and j.get("success") is True
+            data = {"status_code": r.status_code, "text": r.text}
+        return (200 <= r.status_code < 300, data)
+    except Exception as e:
+        return (False, {"error": str(e)})
 
 async def _send_dm_via_me(page_token: str, recipient_id: str, text: str) -> Tuple[bool, Dict[str, Any]]:
-    url = "https://graph.facebook.com/v20.0/me/messages"
+    url = f"{GRAPH_BASE}/me/messages"  # v21.0
     params = {"access_token": page_token}
     payload = {
         "messaging_type": "RESPONSE",
         "recipient": {"id": recipient_id},
         "message": {"text": text},
     }
-    timeout = httpx.Timeout(12.0, connect=6.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        r = await client.post(url, params=params, json=payload)
+    try:
+        r = await _httpx().post(url, params=params, json=payload)
         try:
             data = r.json()
         except Exception:
             data = {"status_code": r.status_code, "text": r.text}
-        return (r.status_code == 200, data)
+        return (200 <= r.status_code < 300, data)
+    except Exception as e:
+        return (False, {"error": str(e)})
