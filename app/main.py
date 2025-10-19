@@ -324,7 +324,7 @@ CREATE TABLE IF NOT EXISTS mfai_app.instagram_accounts (
   ig_user_id TEXT UNIQUE NOT NULL,
   username TEXT NOT NULL,
   active BOOLEAN NOT NULL DEFAULT TRUE,
-  bot_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  #bot_enabled BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -400,7 +400,7 @@ async def ensure_schema():
             await conn.exec_driver_sql(stmt)
         await conn.exec_driver_sql("""
           ALTER TABLE mfai_app.instagram_accounts
-          ADD COLUMN IF NOT EXISTS bot_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+          #ADD COLUMN IF NOT EXISTS bot_enabled BOOLEAN NOT NULL DEFAULT FALSE;
         """)
         if os.getenv("PUBLIC_SEED_DEMO", "1") == "1":
             await conn.exec_driver_sql("""
