@@ -397,39 +397,39 @@ async def ensure_schema():
     async with engine.begin() as conn:
         await conn.exec_driver_sql("CREATE SCHEMA IF NOT EXISTS mfai_app AUTHORIZATION mfai_owner;")
         await conn.exec_driver_sql("SET search_path TO mfai_app;")
+
         for stmt in _split_sql(SCHEMA_SQL):
             await conn.exec_driver_sql(stmt)
 
-        # 🔥 RIMOSSO IL BLOCCO ALTER TABLE CHE CREAVA DEADLOCK E SYNTAX ERROR 🔥
+        # Aggiungi colonna bot_enabled se manca
+        await conn.exec_driver_sql("""
+            ALTER TABLE mfai_app.instagram_accounts
+            ADD COLUMN IF NOT EXISTS bot_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+        """)
 
+        # --- FIX DEADLOCK: seed eseguito in transazione unica e idempotente ---
         if os.getenv("PUBLIC_SEED_DEMO", "1") == "1":
             await conn.exec_driver_sql("""
-            DO $$
-            DECLARE cid BIGINT;
-            BEGIN
-              INSERT INTO mfai_app.clients(name, email)
-              VALUES ('Public Demo', 'public.demo@example.local')
-              ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name
-              RETURNING id INTO cid;
-
-              INSERT INTO mfai_app.public_spaces(client_id, slug, title, intro, system_prompt, logo_url, active)
-              VALUES (
-                cid,
-                'dietologa-demo',
-                'Dietologa — Demo',
-                'Benvenuto nello spazio demo della Dietologa.',
-                'Sei una dietologa professionale. Rispondi SEMPRE in italiano, con tono empatico e pratico. Offri esempi concreti e suggerimenti alimentari bilanciati. Se la domanda è clinica, invita a consultare un medico.',
-                NULL,
-                TRUE
-              )
-              ON CONFLICT (slug) DO UPDATE
-                SET client_id = EXCLUDED.client_id,
-                    title = EXCLUDED.title,
-                    intro = EXCLUDED.intro,
-                    system_prompt = EXCLUDED.system_prompt,
-                    active = TRUE;
-            END $$;
+                INSERT INTO mfai_app.clients(name, email)
+                VALUES ('Public Demo', 'public.demo@example.local')
+                ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name;
             """)
+
+            await conn.exec_driver_sql("""
+                INSERT INTO mfai_app.public_spaces(client_id, slug, title, intro, system_prompt, logo_url, active)
+                SELECT c.id, 'dietologa-demo', 'Dietologa — Demo',
+                       'Benvenuto nello spazio demo della Dietologa.',
+                       'Sei una dietologa professionale. Rispondi SEMPRE in italiano, con tono empatico e pratico. Offri esempi concreti e suggerimenti alimentari bilanciati. Se la domanda è clinica, invita a consultare un medico.',
+                       NULL, TRUE
+                FROM mfai_app.clients c
+                WHERE c.email = 'public.demo@example.local'
+                ON CONFLICT (slug) DO UPDATE
+                    SET title = EXCLUDED.title,
+                        intro = EXCLUDED.intro,
+                        system_prompt = EXCLUDED.system_prompt,
+                        active = TRUE;
+            """)
+
 
 
 # -----------------------------------------------------------
