@@ -22,6 +22,43 @@ from app.services.client_prompts import list_prompts_for_client, upsert_prompt_f
 APP_NAME = "MF.AI"
 app = FastAPI(title=APP_NAME)
 
+# --- FORCE BASIC AUTH ON /ui2 (regardless of routes) ---
+import base64, hmac, os
+from starlette.responses import PlainTextResponse
+
+ADMIN_USER = os.getenv("ADMIN_USER", "")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+
+@app.middleware("http")
+async def protect_ui2(request, call_next):
+    path = request.url.path
+    if path.startswith("/ui2"):
+        auth = request.headers.get("authorization")
+        if not auth or not auth.lower().startswith("basic "):
+            return PlainTextResponse(
+                "Unauthorized",
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="MF.AI Admin"'},
+            )
+        try:
+            decoded = base64.b64decode(auth.split(" ", 1)[1]).decode("utf-8")
+            username, password = decoded.split(":", 1)
+        except Exception:
+            return PlainTextResponse(
+                "Unauthorized",
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="MF.AI Admin"'},
+            )
+        if not (hmac.compare_digest(username, ADMIN_USER) and hmac.compare_digest(password, ADMIN_PASSWORD)):
+            return PlainTextResponse(
+                "Unauthorized",
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="MF.AI Admin"'},
+            )
+    return await call_next(request)
+# --- END FORCE BASIC AUTH ---
+
+
 # === UI2 router + static
 from app.admin_ui import routes as ui2_routes
 app.include_router(ui2_routes.router)
