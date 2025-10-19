@@ -406,11 +406,25 @@ async def ensure_schema():
         for stmt in _split_sql(SCHEMA_SQL):
             await conn.exec_driver_sql(stmt)
 
-        # Aggiungi colonna bot_enabled se manca
-        await conn.exec_driver_sql("""
-            ALTER TABLE mfai_app.instagram_accounts
-            ADD COLUMN IF NOT EXISTS bot_enabled BOOLEAN NOT NULL DEFAULT FALSE;
-        """)
+        # --- FIX DEADLOCK: aggiungi colonna bot_enabled solo se manca ---
+        try:
+            await conn.exec_driver_sql("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = 'mfai_app'
+                        AND table_name = 'instagram_accounts'
+                        AND column_name = 'bot_enabled'
+                    ) THEN
+                        ALTER TABLE mfai_app.instagram_accounts
+                        ADD COLUMN bot_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+                    END IF;
+                END $$;
+            """)
+            logger.info("Column bot_enabled ensured safely.")
+        except Exception as e:
+            logger.warning(f"bot_enabled check skipped: {e}")
 
         # --- FIX DEADLOCK: seed eseguito in transazione unica e idempotente ---
         if os.getenv("PUBLIC_SEED_DEMO", "1") == "1":
@@ -434,6 +448,7 @@ async def ensure_schema():
                         system_prompt = EXCLUDED.system_prompt,
                         active = TRUE;
             """)
+
 
 
 
