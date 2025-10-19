@@ -7,6 +7,7 @@
 # - POST /ui2/clients/delete  -> elimina cliente
 # - POST /ui2/accounts/toggle-active -> attiva/disattiva account IG
 # - POST /ui2/tokens/refresh  -> salva/aggiorna token IG tramite /save-token
+# - GET  /ui2/connect -> redirect a /login (Meta Login) con Basic Auth
 # ------------------------------------------------------------
 
 import os
@@ -14,22 +15,23 @@ import secrets
 import httpx
 from typing import Any, Dict, List, Optional
 
+import os
 from fastapi import APIRouter, Depends, HTTPException, Request, status, Form, Query
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
+from app.security_admin import verify_admin  # protezione admin
 
 # --- DB engine
 try:
     from app.db import engine
 except Exception:
-    try:
-        from app.db import engine
-    except Exception:
-        engine = None
+    engine = None
 
+# --- Router protetto
 router = APIRouter(prefix="/ui2", tags=["Admin UI"])
+router.dependencies = [Depends(verify_admin)]  # richiede login Basic
 templates = Jinja2Templates(directory="app/admin_ui/templates")
 security = HTTPBasic()
 
@@ -38,6 +40,7 @@ ADMIN_USER = os.getenv("ADMIN_USER", "")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 CLIENTS_TABLE = os.getenv("CLIENTS_TABLE", "mfai_app.clients")
 ACCOUNTS_TABLE = os.getenv("ACCOUNTS_TABLE", "mfai_app.instagram_accounts")
+
 
 # ------------------------------------------------------------
 # Auth
@@ -108,10 +111,28 @@ async def home(
                 for r in rows
             ]
 
+    # URL rapido per il Meta Login (mostrato nel template come bottone)
+    connect_url = "/login"  # alias a /meta/login definito in main.py
+
     return templates.TemplateResponse(
         "home.html",
-        {"request": request, "page_title": "MF.AI — Admin UI", "ok": ok, "err": err, "items": items},
+        {
+            "request": request,
+            "page_title": "MF.AI — Admin UI",
+            "ok": ok,
+            "err": err,
+            "items": items,
+            "connect_url": connect_url,
+        },
     )
+
+# ------------------------------------------------------------
+# Scorciatoia autenticata verso il Meta Login (comoda per lo screencast)
+# ------------------------------------------------------------
+@router.get("/connect")
+async def ui_connect(_: bool = Depends(require_admin)):
+    # Protegge il redirect con Basic Auth, poi rimanda al flusso /meta/login
+    return RedirectResponse(url="/login", status_code=302)
 
 # ------------------------------------------------------------
 # CREATE client
