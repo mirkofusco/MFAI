@@ -175,6 +175,7 @@ async def meta_verify(request: Request):
 # ------------------------------------------------------------------
 @router.post("/webhook/meta")
 async def meta_webhook(request: Request):
+    # --- Parse body ---
     try:
         body: Dict[str, Any] = await request.json()
     except Exception:
@@ -182,26 +183,57 @@ async def meta_webhook(request: Request):
 
     logger.info("[IG_WEBHOOK] %s", json.dumps(body, ensure_ascii=False))
 
-    # <<< QUESTO IF DEVE STARE DENTRO LA FUNZIONE >>>
+    # Accetta sia object=instagram che object=page
     if body.get("object") not in ("instagram", "page"):
-        logger.info(f"Webhook object ignored: {body.get('object')}")
+        logger.info("Webhook object ignored: %s", body.get("object"))
         return JSONResponse({"status": "ignored"}, status_code=200)
 
-    # continua qui il resto della tua logica...
     entries: List[Dict[str, Any]] = body.get("entry", []) or []
+    if not entries:
+        logger.info("No entries in payload")
+        return JSONResponse({"status": "ok", "note": "no entries"}, status_code=200)
+
+    # === Loop sugli entry (uno per pagina/ig_user_id) ===
     for entry in entries:
         ig_user_id = str(entry.get("id") or "")
-        messaging_list = entry.get("messaging", []) or []
-        # ... (tutto il tuo codice successivo)
+        if not ig_user_id:
+            logger.info("Entry senza ig_user_id: %s", entry)
+            continue
 
-    for entry in entries:
-        ig_user_id = str(entry.get("id") or "")  # es. 1784...
-        messaging_list = entry.get("messaging", []) or []
+        # Costruisci una lista unificata di eventi "messaging"
+        messaging_list: List[Dict[str, Any]] = entry.get("messaging", []) or []
+
+        # Se vuota, prova il formato Instagram moderno con 'changes'
+        if not messaging_list:
+            changes = entry.get("changes", []) or []
+            for ch in changes:
+                val = ch.get("value") or {}
+                # IG-style: value.messages = [{from: "...", text: {"body": "..."}}]
+                for m in val.get("messages", []) or []:
+                    sender_from = str(m.get("from") or "")
+                    text_body = (m.get("text") or {}).get("body")
+                    if sender_from and isinstance(text_body, str) and text_body.strip():
+                        messaging_list.append({
+                            "sender": {"id": sender_from},
+                            "recipient": {"id": ig_user_id},
+                            "message": {"text": text_body}
+                        })
+                # fallback Messenger-like
+                for m in val.get("messaging", []) or []:
+                    snd = ((m.get("sender") or {}).get("id"))
+                    txt = ((m.get("message") or {}).get("text"))
+                    if snd and isinstance(txt, str) and txt.strip():
+                        messaging_list.append(m)
+
+        if not messaging_list:
+            logger.info("No messaging/changes messages for ig_user_id=%s", ig_user_id)
+            continue
 
         ig_account_id = await _get_ig_account_id(ig_user_id)
 
+        # === Loop sugli eventi messaggio ===
         for evt in messaging_list:
-            # --- HANDOVER: pausa IA quando l'umano prende/lascia il thread ---
+            # --- HANDOVER: pausa/riprendi AI quando l'umano prende/lascia il thread ---
             handover = evt.get("pass_thread_control") or evt.get("take_thread_control")
             if isinstance(handover, dict):
                 try:
@@ -235,21 +267,25 @@ async def meta_webhook(request: Request):
 
             # --- SOLO messaggi di testo non-echo da UTENTE ---
             if not isinstance(message, dict):
+                logger.info("Skip: message not dict")
                 continue
             if message.get("is_echo"):
+                logger.info("Skip: echo")
                 continue
             text_msg = message.get("text")
             if not isinstance(text_msg, str) or not text_msg.strip():
+                logger.info("Skip: not text")
                 continue
             if sender_id == ig_user_id:
+                logger.info("Skip: page echo")
                 continue
 
-            # Se umano attivo su thread e vogliamo rispettarlo -> non rispondere
+            # Rispetto umano attivo?
             if RESPECT_HUMAN and _human_active(ig_user_id, sender_id):
                 logger.info("Human active: skip AI reply for %s", _key(ig_user_id, sender_id))
                 continue
 
-            # --- BOT OFF guard per account ---
+            # Bot abilitato?
             if not await _bot_is_enabled(ig_user_id):
                 logger.info("Bot disabled for ig_user_id=%s, skip reply", ig_user_id)
                 try:
@@ -258,20 +294,23 @@ async def meta_webhook(request: Request):
                     pass
                 continue
 
-            # --- Page Token attivo (anticipato per typing_on) ---
+            # Page token (servirà per typing+invio)
             page_token = await _get_active_page_token(ig_user_id)
             if not page_token:
                 logger.warning("No active PAGE TOKEN for IG %s", ig_user_id)
                 continue
 
-            # --- Typing immediato non bloccante ---
-            asyncio.create_task(_send_typing_via_me(page_token, sender_id))
+            # Typing immediato (non blocca)
+            try:
+                asyncio.create_task(_send_typing_via_me(page_token, sender_id))
+            except Exception as e:
+                logger.warning("typing_on schedule failed: %s", e)
 
-            # --- Conversational memory: aggiungi l'input utente alla sessione ---
+            # Memoria conversazionale: append input utente
             _sess_add(ig_user_id, sender_id, "user", text_msg)
 
-            # --- Carica prompt per-cliente (system) ---
-            system_override: str | None = None
+            # System prompt per cliente (se presente)
+            system_override: Optional[str] = None
             try:
                 cid = await _get_client_id_by_ig(ig_user_id)
                 if cid:
@@ -279,17 +318,19 @@ async def meta_webhook(request: Request):
             except Exception as e:
                 logger.warning("system prompt load failed: %s", e)
 
-            # --- Reply (AI con storia conversazionale) ---
+            # Chiamata AI (con history) + fallback
             try:
-                reply_text = await ai_reply_with_history(ig_user_id, sender_id, system_override=system_override)
+                reply_text = await ai_reply_with_history(
+                    ig_user_id, sender_id, system_override=system_override
+                )
             except Exception as e:
                 logger.error("AI error: %s", e)
                 reply_text = _fallback_reply(text_msg)
 
-            # --- Invio via /me/messages ---
+            # Invio messaggio
             ok, resp = await _send_dm_via_me(page_token, sender_id, reply_text)
 
-            # Se fallisce perché non siamo proprietari del thread:
+            # Se fallisce per ownership, prova takeover (se RESPECT_HUMAN false)
             if not ok and _needs_takeover(resp):
                 if RESPECT_HUMAN:
                     _mark_human(ig_user_id, sender_id)
@@ -313,7 +354,7 @@ async def meta_webhook(request: Request):
 
             logger.info("Send result ok=%s resp=%s", ok, resp)
 
-    return JSONResponse({"status": "ok"})
+    return JSONResponse({"status": "ok"}, status_code=200)
 
 # ------------------------------------------------------------------
 # AI + FALLBACK
