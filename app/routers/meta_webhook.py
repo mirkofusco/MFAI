@@ -30,6 +30,9 @@ INBOX_APP_ID      = 263902037430900  # Facebook Page Inbox
 RESPECT_HUMAN     = os.getenv("RESPECT_HUMAN", "true").lower() == "true"
 HUMAN_TTL_SEC     = int(os.getenv("HUMAN_TTL_SEC", "900"))  # 15 minuti default
 
+logger.info(f"[DEBUG] OPENAI_API_KEY loaded: {bool(OPENAI_API_KEY)}")
+
+
 # ---- Conversational memory (in-RAM) ----
 # key = f"{ig_user_id}:{user_id}", value = list of {"role":"user/assistant","content": "..."}
 _SESS: Dict[str, List[Dict[str, str]]] = {}
