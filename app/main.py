@@ -310,6 +310,7 @@ async def require_api_key(key: Optional[str] = Depends(api_key_header)) -> None:
 # -----------------------------------------------------------
 # SCHEMA SQL (con bot_enabled) + startup
 # -----------------------------------------------------------
+# -----------------------------------------------------------
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS mfai_app.clients (
   id BIGSERIAL PRIMARY KEY,
@@ -324,7 +325,7 @@ CREATE TABLE IF NOT EXISTS mfai_app.instagram_accounts (
   ig_user_id TEXT UNIQUE NOT NULL,
   username TEXT NOT NULL,
   active BOOLEAN NOT NULL DEFAULT TRUE,
-  --bot_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  -- bot_enabled BOOLEAN NOT NULL DEFAULT FALSE,  -- già esistente nel DB
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -398,10 +399,9 @@ async def ensure_schema():
         await conn.exec_driver_sql("SET search_path TO mfai_app;")
         for stmt in _split_sql(SCHEMA_SQL):
             await conn.exec_driver_sql(stmt)
-        await conn.exec_driver_sql("""
-          ALTER TABLE mfai_app.instagram_accounts
-          --ADD COLUMN IF NOT EXISTS bot_enabled BOOLEAN NOT NULL DEFAULT FALSE;
-        """)
+
+        # 🔥 RIMOSSO IL BLOCCO ALTER TABLE CHE CREAVA DEADLOCK E SYNTAX ERROR 🔥
+
         if os.getenv("PUBLIC_SEED_DEMO", "1") == "1":
             await conn.exec_driver_sql("""
             DO $$
@@ -430,6 +430,7 @@ async def ensure_schema():
                     active = TRUE;
             END $$;
             """)
+
 
 # -----------------------------------------------------------
 # Routes base / health
