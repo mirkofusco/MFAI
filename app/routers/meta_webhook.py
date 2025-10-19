@@ -10,6 +10,9 @@ from fastapi.responses import PlainTextResponse, JSONResponse
 import httpx
 from sqlalchemy import text
 
+import asyncio  # <<< AGGIUNGI
+
+
 from app.db import engine  # async SQLAlchemy engine verso Neon
 
 logger = logging.getLogger("meta_webhook")
@@ -179,10 +182,18 @@ async def meta_webhook(request: Request):
 
     logger.info("[IG_WEBHOOK] %s", json.dumps(body, ensure_ascii=False))
 
-    if body.get("object") != "instagram":
+    # <<< QUESTO IF DEVE STARE DENTRO LA FUNZIONE >>>
+    if body.get("object") not in ("instagram", "page"):
+        logger.info(f"Webhook object ignored: {body.get('object')}")
         return JSONResponse({"status": "ignored"}, status_code=200)
 
+    # continua qui il resto della tua logica...
     entries: List[Dict[str, Any]] = body.get("entry", []) or []
+    for entry in entries:
+        ig_user_id = str(entry.get("id") or "")
+        messaging_list = entry.get("messaging", []) or []
+        # ... (tutto il tuo codice successivo)
+
     for entry in entries:
         ig_user_id = str(entry.get("id") or "")  # es. 1784...
         messaging_list = entry.get("messaging", []) or []
