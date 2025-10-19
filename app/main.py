@@ -24,6 +24,11 @@ from app.routers import meta_webhook  # >>> ADD
 APP_NAME = "MF.AI"
 app = FastAPI(title=APP_NAME)
 
+import logging
+logger = logging.getLogger("uvicorn")
+logger.info(f"[DEBUG] OPENAI_API_KEY loaded: {bool(os.getenv('OPENAI_API_KEY'))}")
+
+
 app.include_router(meta_webhook.router)  # >>> ADD
 
 
