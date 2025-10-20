@@ -320,8 +320,8 @@ async def meta_webhook(request: Request):
                     system_override = await _get_system_prompt(cid)
             except Exception as e:
                 logger.warning("system prompt load failed: %s", e)
-
-            # Chiamata AI (con history) + fallback
+                
+                            # Chiamata AI (con history) + fallback
             try:
                 reply_text = await ai_reply_with_history(
                     ig_user_id, sender_id, system_override=system_override
@@ -330,19 +330,30 @@ async def meta_webhook(request: Request):
                 logger.error("AI error: %s", e)
                 reply_text = _fallback_reply(text_msg)
 
-            # Invio messaggio
+            # Takeover preventivo se non vogliamo rispettare l'umano
+            if not RESPECT_HUMAN:
+                try:
+                    took_pre = await _take_thread_control(page_token, FB_PAGE_ID, sender_id)
+                    logger.info("take_thread_control (pre-send) took=%s", took_pre)
+                except Exception as e:
+                    logger.warning("take_thread_control (pre-send) error: %s", e)
+
+            # Invio messaggio (primo tentativo)
             ok, resp = await _send_dm_via_me(page_token, sender_id, reply_text)
 
-            # Se fallisce per ownership, prova takeover (se RESPECT_HUMAN false)
+            # Se fallisce per ownership, prova takeover/rispetto umano e ritenta
             if not ok and _needs_takeover(resp):
                 if RESPECT_HUMAN:
                     _mark_human(ig_user_id, sender_id)
                     logger.info("Got 2534037: respect human -> pause AI for %s", _key(ig_user_id, sender_id))
                 else:
-                    took = await _take_thread_control(page_token, FB_PAGE_ID, sender_id)
-                    logger.info("take_thread_control took=%s", took)
-                    if took:
-                        ok, resp = await _send_dm_via_me(page_token, sender_id, reply_text)
+                    try:
+                        took_retry = await _take_thread_control(page_token, FB_PAGE_ID, sender_id)
+                        logger.info("take_thread_control (retry) took=%s", took_retry)
+                        if took_retry:
+                            ok, resp = await _send_dm_via_me(page_token, sender_id, reply_text)
+                    except Exception as e:
+                        logger.warning("take_thread_control (retry) error: %s", e)
 
             # Se inviato con successo, append risposta in memoria
             if ok:
@@ -356,6 +367,9 @@ async def meta_webhook(request: Request):
                 logger.warning("DB log(out) failed: %s", e)
 
             logger.info("Send result ok=%s resp=%s", ok, resp)
+
+
+      
 
     return JSONResponse({"status": "ok"}, status_code=200)
 
