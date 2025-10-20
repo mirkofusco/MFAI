@@ -82,15 +82,17 @@ def _clear_human(ig_user_id: str, user_id: str) -> None:
 _HTTPX: Optional[httpx.AsyncClient] = None
 GRAPH_BASE = "https://graph.facebook.com/v21.0"  # v21.0
 
+_HTTPX = None
+
 def _httpx() -> httpx.AsyncClient:
     global _HTTPX
     if _HTTPX is None:
         _HTTPX = httpx.AsyncClient(
-            http2=True,
-            timeout=httpx.Timeout(8.0, read=30.0),
-            limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
+            timeout=httpx.Timeout(12.0, connect=6.0)
+            # niente http2=True
         )
     return _HTTPX
+
 
 async def _close_httpx():
     global _HTTPX
