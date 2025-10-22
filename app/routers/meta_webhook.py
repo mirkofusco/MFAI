@@ -187,10 +187,16 @@ async def meta_verify(request: Request):
 # ------------------------------------------------------------------
 @router.post("/webhook/meta")
 async def meta_webhook(request: Request):
+    # 🔍 DEBUG: log TUTTO
+    logger.info(f"[WEBHOOK-DEBUG] Received POST from {request.client.host}")
+    logger.info(f"[WEBHOOK-DEBUG] Headers: {dict(request.headers)}")
+    
     # --- Parse body ---
     try:
         body: Dict[str, Any] = await request.json()
-    except Exception:
+        logger.info(f"[WEBHOOK-DEBUG] Body parsed OK: {json.dumps(body, ensure_ascii=False)[:500]}")
+    except Exception as e:
+        logger.error(f"[WEBHOOK-DEBUG] Body parse failed: {e}")
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
     logger.info("[IG_WEBHOOK] %s", json.dumps(body, ensure_ascii=False))
