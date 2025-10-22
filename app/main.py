@@ -42,9 +42,12 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 @app.middleware("http")
 async def protect_ui2(request, call_next):
     path = request.url.path
+    logger.info(f"[PROTECT_UI2] path={path}")  # ← AGGIUNGI QUESTA RIGA
+    
     if path.startswith("/ui2"):
         auth = request.headers.get("authorization")
         if not auth or not auth.lower().startswith("basic "):
+            logger.warning(f"[PROTECT_UI2] BLOCKED: no auth for {path}")  # ← AGGIUNGI
             return PlainTextResponse(
                 "Unauthorized",
                 status_code=401,
@@ -54,12 +57,14 @@ async def protect_ui2(request, call_next):
             decoded = base64.b64decode(auth.split(" ", 1)[1]).decode("utf-8")
             username, password = decoded.split(":", 1)
         except Exception:
+            logger.warning(f"[PROTECT_UI2] BLOCKED: bad auth for {path}")  # ← AGGIUNGI
             return PlainTextResponse(
                 "Unauthorized",
                 status_code=401,
                 headers={"WWW-Authenticate": 'Basic realm="MF.AI Admin"'},
             )
         if not (hmac.compare_digest(username, ADMIN_USER) and hmac.compare_digest(password, ADMIN_PASSWORD)):
+            logger.warning(f"[PROTECT_UI2] BLOCKED: wrong credentials for {path}")  # ← AGGIUNGI
             return PlainTextResponse(
                 "Unauthorized",
                 status_code=401,
