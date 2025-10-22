@@ -73,6 +73,13 @@ async def protect_ui2(request, call_next):
     return await call_next(request)
 # --- END FORCE BASIC AUTH ---
 
+# 🔍 LOG GLOBALE: ogni richiesta POST
+@app.middleware("http")
+async def log_all_posts(request, call_next):
+    if request.method == "POST":
+        logger.info(f"🟣 [GLOBAL] POST to {request.url.path} from {request.client.host}")
+    return await call_next(request)
+
 
 # === UI2 router + static
 from app.admin_ui import routes as ui2_routes
