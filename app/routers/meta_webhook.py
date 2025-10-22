@@ -170,9 +170,16 @@ async def meta_verify(request: Request):
     mode = request.query_params.get("hub.mode")
     token = request.query_params.get("hub.verify_token")
     challenge = request.query_params.get("hub.challenge")
-
+    
+    # 🔍 DEBUG: vediamo cosa arriva
+    logger.info(f"[VERIFY] mode={mode}, token={token}, challenge={challenge}")
+    logger.info(f"[VERIFY] VERIFY_TOKEN={VERIFY_TOKEN}")
+    
     if mode == "subscribe" and token == VERIFY_TOKEN and challenge:
+        logger.info(f"[VERIFY] OK, returning challenge")
         return PlainTextResponse(challenge)
+    
+    logger.warning(f"[VERIFY] FAILED: mode={mode!r}, token_match={token==VERIFY_TOKEN}, challenge={challenge!r}")
     raise HTTPException(status_code=403, detail="Forbidden")
 
 # ------------------------------------------------------------------
