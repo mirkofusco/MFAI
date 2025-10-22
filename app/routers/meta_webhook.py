@@ -211,6 +211,10 @@ async def meta_webhook(request: Request):
         # Se vuota, prova il formato Instagram moderno con 'changes'
         if not messaging_list:
             changes = entry.get("changes", []) or []
+                        # === LOG COMMENTI IG (SOLO LOG, NIENTE DM) ===
+            for ch in changes:
+                _mfai_log_ig_comment_change(ch)
+
             for ch in changes:
                 val = ch.get("value") or {}
                 # IG-style: value.messages = [{from: "...", text: {"body": "..."}}]
@@ -493,3 +497,35 @@ async def _send_dm_via_me(page_token: str, recipient_id: str, text: str) -> Tupl
         return (200 <= r.status_code < 300, data)
     except Exception as e:
         return (False, {"error": str(e)})
+    
+    
+    
+    # === MF.AI — STEP 1: LOG COMMENTI IG (SOLO LOG, NIENTE DM) ===
+import logging
+from typing import Any, Dict
+
+_logger = logging.getLogger("meta_webhook")
+
+def _mfai_log_ig_comment_change(change: Dict[str, Any]) -> None:
+    """
+    Riconosce un evento 'commento' IG dal webhook e lo scrive nei log.
+    Non invia messaggi: serve solo per verificare che arrivino gli eventi.
+    """
+    if not isinstance(change, dict):
+        return
+
+    field = change.get("field")
+    value = change.get("value", {}) if isinstance(change.get("value"), dict) else {}
+
+    comment_id = value.get("id") or value.get("comment_id")
+    media_id   = (value.get("media", {}) or {}).get("id") if isinstance(value.get("media"), dict) else value.get("media_id")
+    text       = value.get("text") or value.get("message") or ""
+    from_user  = (value.get("from", {}) or {}).get("username") or (value.get("from", {}) or {}).get("id")
+
+    # Log solo se sembra davvero un commento
+    if field == "comments" or comment_id or text:
+        _logger.info(
+            "[IG-WEBHOOK][COMMENT] field=%s comment_id=%s media_id=%s from=%s text=%r",
+            field, comment_id, media_id, from_user, text
+        )
+
