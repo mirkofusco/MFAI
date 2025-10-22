@@ -29,7 +29,7 @@ logger = logging.getLogger("uvicorn")
 logger.info(f"[DEBUG] OPENAI_API_KEY loaded: {bool(os.getenv('OPENAI_API_KEY'))}")
 
 
-app.include_router(meta_webhook.router)  # >>> ADD
+#app.include_router(meta_webhook.router)  # >>> ADD
 
 
 # --- FORCE BASIC AUTH ON /ui2 (regardless of routes) ---
