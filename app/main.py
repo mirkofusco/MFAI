@@ -273,6 +273,10 @@ def robots_txt():
 # -----------------------------------------------------------
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
+    # ⚠️ NON toccare webhook Meta (deve essere pubblico)
+    if request.url.path.startswith("/webhook/"):
+        return await call_next(request)
+    
     resp = await call_next(request)
 
     # CSP: su /ui2* servono inline style/script per l'injection
