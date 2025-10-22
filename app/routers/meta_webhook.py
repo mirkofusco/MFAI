@@ -20,6 +20,13 @@ logger.setLevel(logging.INFO)
 
 router = APIRouter()
 
+# 🔍 LOG DI STARTUP
+import sys
+print("=" * 60, file=sys.stderr)
+print("🚀 meta_webhook.py CARICATO!", file=sys.stderr)
+print("=" * 60, file=sys.stderr)
+logger.info("🚀 [META_WEBHOOK] Router inizializzato")
+
 # ------------------------------------------------------------------
 # ENV / CONFIG
 # ------------------------------------------------------------------
@@ -187,6 +194,9 @@ async def meta_verify(request: Request):
 # ------------------------------------------------------------------
 @router.post("/webhook/meta")
 async def meta_webhook(request: Request):
+    print("🔴 WEBHOOK POST RICEVUTO!", file=sys.stderr)
+    logger.warning("🔴 [WEBHOOK] POST ricevuto!")
+    
     # 🔍 DEBUG: log TUTTO
     logger.info(f"[WEBHOOK-DEBUG] Received POST from {request.client.host}")
     logger.info(f"[WEBHOOK-DEBUG] Headers: {dict(request.headers)}")
