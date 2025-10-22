@@ -208,10 +208,11 @@ async def meta_webhook(request: Request):
         # Costruisci una lista unificata di eventi "messaging"
         messaging_list: List[Dict[str, Any]] = entry.get("messaging", []) or []
 
-        # Se vuota, prova il formato Instagram moderno con 'changes'
+             # Se vuota, prova il formato Instagram moderno con 'changes'
         if not messaging_list:
             changes = entry.get("changes", []) or []
-                        # === LOG COMMENTI IG (SOLO LOG, NIENTE DM) ===
+
+            # === LOG COMMENTI IG (SOLO LOG, NIENTE DM) ===
             for ch in changes:
                 _mfai_log_ig_comment_change(ch)
 
@@ -233,6 +234,7 @@ async def meta_webhook(request: Request):
                     txt = ((m.get("message") or {}).get("text"))
                     if snd and isinstance(txt, str) and txt.strip():
                         messaging_list.append(m)
+
 
         if not messaging_list:
             logger.info("No messaging/changes messages for ig_user_id=%s", ig_user_id)
