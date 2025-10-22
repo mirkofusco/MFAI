@@ -243,3 +243,47 @@ async def ui_refresh_token(
         return RedirectResponse(url="/ui2?err=token_refresh_failed", status_code=303)
 
     return RedirectResponse(url="/ui2?ok=token_refreshed", status_code=303)
+
+
+# === UI2 inline: Risposte DM post (SAVE / DELETE) ===
+from fastapi import Form, status, Depends
+from fastapi.responses import RedirectResponse
+from sqlalchemy import text
+from app.security_admin import verify_admin
+from app.db import engine
+
+DM_DEFAULT_KEY = "ig_private_reply_default"
+DM_PER_POST_PREFIX = "ig_private_reply:"
+
+@router.post("/ui2/dm-replies/inline/save")
+async def ui2_dm_replies_inline_save(
+    client_id: int = Form(...),
+    media_id: str = Form(""),
+    message: str = Form(""),
+    admin=Depends(verify_admin)
+):
+    key = DM_DEFAULT_KEY if not media_id.strip() else f"{DM_PER_POST_PREFIX}{media_id.strip()}"
+    if not message.strip():
+        return RedirectResponse(url=f"/ui2/client?client_id={client_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+    q_upsert = text("""
+        INSERT INTO mfai_app.client_prompts (client_id, key, value)
+        VALUES (:cid, :k, :v)
+        ON CONFLICT (client_id, key) DO UPDATE SET value = EXCLUDED.value
+    """)
+    async with engine.begin() as conn:
+        await conn.execute(q_upsert, {"cid": client_id, "k": key, "v": message.strip()})
+
+    return RedirectResponse(url=f"/ui2/client?client_id={client_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+@router.post("/ui2/dm-replies/inline/delete")
+async def ui2_dm_replies_inline_delete(
+    client_id: int = Form(...),
+    key: str = Form(...),
+    admin=Depends(verify_admin)
+):
+    q_del = text("DELETE FROM mfai_app.client_prompts WHERE client_id = :cid AND key = :k")
+    async with engine.begin() as conn:
+        await conn.execute(q_del, {"cid": client_id, "k": key})
+
+    return RedirectResponse(url=f"/ui2/client?client_id={client_id}", status_code=status.HTTP_303_SEE_OTHER)
