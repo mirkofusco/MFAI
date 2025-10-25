@@ -531,29 +531,6 @@ def ui2_page():
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>MF.AI — Clients</title>
   <link rel="stylesheet" href="/ui2.css">
-</head>
-<body>
-  <!-- Language Switcher -->
-  <!-- Top Bar: Language + Connect -->
- <!-- Connect Button -->
-  <div style="position:fixed;top:12px;right:12px;z-index:10000;">
-    <a href="/meta/login" style="text-decoration:none">
-      <button class="connect-btn" title="Connect Instagram Business Account via Meta Login">
-        🔗 Connect with Meta
-      </button>
-    </a>
-  </div>
-  
-  <!-- Language Switcher -->
-  <div style="position:fixed;top:52px;right:12px;z-index:10000;display:flex;gap:6px;">
-    <button id="lang-it" class="lang-btn active" onclick="setLang('it')" title="Italiano">🇮🇹 IT</button>
-    <button id="lang-en" class="lang-btn" onclick="setLang('en')" title="English">🇬🇧 EN</button>
-  </div>
-  
-  <div id="app"></div>
-  <script src="/ui2.js" defer></script>
-  
-  <script>
   <style>
     .connect-btn {
       padding: 8px 14px;
@@ -573,8 +550,24 @@ def ui2_page():
       transform: translateY(-1px);
     }
   </style>
+</head>
+<body>
+  <!-- Top Bar: Language + Connect -->
+  <div style="position:fixed;top:12px;right:12px;z-index:10000;display:flex;gap:8px;align-items:center;">
+    <a href="/meta/login" style="text-decoration:none">
+      <button class="connect-btn" title="Connect Instagram Business Account via Meta Login">
+        🔗 Connect with Meta
+      </button>
+    </a>
+    <button id="lang-it" class="lang-btn" onclick="setLang('it')" title="Italiano">🇮🇹 IT</button>
+    <button id="lang-en" class="lang-btn" onclick="setLang('en')" title="English">🇬🇧 EN</button>
+  </div>
+  
+  <div id="app"></div>
+  
+  <script>
     // Language data
-    const LANG = {
+    window.LANG = {
       it: {
         title: 'MF.AI — Clienti',
         loading: 'Carico clienti…',
@@ -625,25 +618,30 @@ def ui2_page():
       }
     };
     
-    let currentLang = localStorage.getItem('mfai_lang') || 'it';
+    window.currentLang = localStorage.getItem('mfai_lang') || 'it';
     
     function setLang(lang) {
-      currentLang = lang;
+      window.currentLang = lang;
       localStorage.setItem('mfai_lang', lang);
       document.querySelectorAll('.lang-btn').forEach(btn => btn.classList.remove('active'));
-      document.getElementById('lang-' + lang).classList.add('active');
-      
+      const btn = document.getElementById('lang-' + lang);
+      if (btn) btn.classList.add('active');
       // Trigger re-render if app is loaded
       if (window.reloadUI) window.reloadUI();
     }
     
     function t(key) {
-      return LANG[currentLang][key] || key;
+      return window.LANG[window.currentLang][key] || key;
     }
     
-    // Set initial language
-    setLang(currentLang);
+    // Set initial language button state
+    document.addEventListener('DOMContentLoaded', function() {
+      const btn = document.getElementById('lang-' + window.currentLang);
+      if (btn) btn.classList.add('active');
+    });
   </script>
+  
+  <script src="/ui2.js" defer></script>
 </body>
 </html>"""
 
@@ -693,93 +691,18 @@ button:hover{filter:brightness(1.1)}
 @app.get("/ui2.js")
 def ui2_js():
     JS = '''(function(){
-  // === TRANSLATION SYSTEM ===
-  var LANG = {
-    it: {
-      brand: 'MF.AI — Clienti',
-      searchPlaceholder: 'Cerca cliente…',
-      loading: 'Carico clienti…',
-      noClient: 'Nessun cliente',
-      selectClient: 'Seleziona un cliente dalla lista.',
-      loadingHint: 'Carico…',
-      clientsLabel: 'Clienti: ',
-      loadingCard: 'Carico scheda…',
-      ready: 'Pronto',
-      client: 'Cliente',
-      refresh: 'Ricarica scheda',
-      adminClassic: 'Admin classico',
-      adminClassicTitle: 'Apri l\\'Admin classico in una nuova scheda',
-      noResults: 'Nessun risultato',
-      bot: 'Bot',
-      active: 'Attivo',
-      inactive: 'Disattivo',
-      enableBot: 'Attiva bot',
-      disableBot: 'Disattiva bot',
-      noIGAccount: 'Nessun account IG collegato.',
-      promptTitle: 'Prompt cliente (unico)',
-      promptPlaceholder: 'Scrivi qui il prompt completo...',
-      save: 'Salva',
-      saved: 'Salvato',
-      error: 'Errore',
-      sectionDisabled: 'Sezione disabilitata',
-      endpointUnavailable: '/ui2/prompts/{client_id} non disponibile',
-      retry: 'Riprova',
-      tokens: 'Token',
-      noTokens: 'Nessun token per questo account.',
-      expires: 'scade',
-      logs: 'Ultimi log',
-      noLogs: 'Nessun log recente.',
-      status: 'Stato',
-      uiError: '⚠️ Errore UI'
-    },
-    en: {
-      brand: 'MF.AI — Clients',
-      searchPlaceholder: 'Search client…',
-      loading: 'Loading clients…',
-      noClient: 'No client selected',
-      selectClient: 'Select a client from the list.',
-      loadingHint: 'Loading…',
-      clientsLabel: 'Clients: ',
-      loadingCard: 'Loading card…',
-      ready: 'Ready',
-      client: 'Client',
-      refresh: 'Refresh card',
-      adminClassic: 'Classic Admin',
-      adminClassicTitle: 'Open Classic Admin in a new tab',
-      noResults: 'No results',
-      bot: 'Bot',
-      active: 'Active',
-      inactive: 'Inactive',
-      enableBot: 'Enable bot',
-      disableBot: 'Disable bot',
-      noIGAccount: 'No IG account connected.',
-      promptTitle: 'Client Prompt (single)',
-      promptPlaceholder: 'Write the complete prompt here...',
-      save: 'Save',
-      saved: 'Saved',
-      error: 'Error',
-      sectionDisabled: 'Section disabled',
-      endpointUnavailable: '/ui2/prompts/{client_id} unavailable',
-      retry: 'Retry',
-      tokens: 'Tokens',
-      noTokens: 'No tokens for this account.',
-      expires: 'expires',
-      logs: 'Recent logs',
-      noLogs: 'No recent logs.',
-      status: 'Status',
-      uiError: '⚠️ UI Error'
-    }
-  };
-  
-  var currentLang = localStorage.getItem('mfai_lang') || 'it';
-  function t(key) { return LANG[currentLang][key] || key; }
+  // === USE TRANSLATION FROM PARENT ===
+  function t(key) { 
+    return window.LANG && window.LANG[window.currentLang] 
+      ? window.LANG[window.currentLang][key] 
+      : key; 
+  }
   
   window.reloadUI = function() {
-    currentLang = localStorage.getItem('mfai_lang') || 'it';
     boot();
   };
   
-  // === ORIGINAL CODE (with translations) ===
+  // === ORIGINAL CODE ===
   var api = {
     clients: '/admin/clients',
     accounts: '/admin/accounts',
