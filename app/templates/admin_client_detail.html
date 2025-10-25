@@ -29,6 +29,104 @@
   <main>
     <article>
       <div id="list">Caricamento…</div>
+      <!-- ===== Spazio: Risposte DM post (inline) ===== -->
+<article id="dm-replies-panel" style="margin-top:16px;">
+  <h3>Risposte DM post</h3>
+  <p class="muted" style="margin-top:-6px">
+    Inserisci l’<b>ID cliente</b> (o falla riempire in automatico più avanti), poi salva un
+    <em>default</em> o una risposta per <em>singolo post</em> (Media ID).
+  </p>
+
+  <!-- Form: Aggiungi/Aggiorna -->
+  <form action="/ui2/dm-replies/inline/save" method="post" style="margin:0 0 12px;">
+    <div class="grid">
+      <div>
+        <label>Client ID</label>
+        <input type="number" name="client_id" id="dm-client-id" placeholder="Es. 125" required>
+      </div>
+      <div>
+        <label>Media ID (vuoto = default cliente)</label>
+        <input type="text" name="media_id" id="dm-media-id" placeholder="17912345678901234">
+        <small class="muted">Se lasci vuoto aggiorni <code>ig_private_reply_default</code></small>
+      </div>
+      <div>
+        <label>Messaggio DM</label>
+        <textarea name="message" id="dm-message" rows="3" placeholder="Es. Grazie del commento, ti scrivo in DM."></textarea>
+      </div>
+    </div>
+    <button type="submit">Salva</button>
+  </form>
+
+  <!-- Tabella risposte esistenti -->
+  <details>
+    <summary>Risposte salvate (default e per-post)</summary>
+    <div id="dm-replies-table" style="overflow:auto">
+      <!-- verrà riempito via JS -->
+      <table>
+        <thead>
+          <tr><th>Key</th><th>Messaggio</th><th style="width:1%"></th></tr>
+        </thead>
+        <tbody id="dm-replies-tbody">
+          <tr><td colspan="3" class="muted">Seleziona ID cliente e premi “Carica”.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="grid" style="margin-top:.5rem">
+      <button type="button" id="dm-load">Carica</button>
+      <span class="muted">Mostra le voci in <code>mfai_app.client_prompts</code> per questo cliente.</span>
+    </div>
+  </details>
+</article>
+<!-- ===== /Spazio: Risposte DM post ===== -->
+
+<script>
+  // Mini helper per caricare/eliminare righe (usa gli endpoint già suggeriti in routes.py)
+  async function fetchJSON(url, opts){ const r = await fetch(url, opts||{}); if(!r.ok) throw new Error('HTTP '+r.status); return r.json().catch(()=>({})) }
+
+  // ENDPOINT minimo di lettura: crea un GET in routes.py se non l'hai già (vedi nota sotto)
+  async function loadDmReplies(clientId){
+    const tbody = document.getElementById('dm-replies-tbody');
+    tbody.innerHTML = '<tr><td colspan="3" class="muted">Caricamento…</td></tr>';
+    try{
+      const res = await fetch(`/admin/client_prompts?client_id=${clientId}`); // vedi nota sotto
+      if(!res.ok){ tbody.innerHTML = '<tr><td colspan="3" class="muted">Errore caricamento.</td></tr>'; return; }
+      const rows = await res.json(); // atteso: [{key:"ig_private_reply_default", value:"..."}, ...]
+      const onlyDm = rows.filter(r => r.key === 'ig_private_reply_default' || r.key.startsWith('ig_private_reply:'));
+      if(onlyDm.length === 0){
+        tbody.innerHTML = '<tr><td colspan="3" class="muted">Nessuna risposta salvata.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = onlyDm.map(r => `
+        <tr>
+          <td><code>${r.key}</code></td>
+          <td style="white-space:pre-wrap">${r.value||''}</td>
+          <td>
+            <form action="/ui2/dm-replies/inline/delete" method="post">
+              <input type="hidden" name="client_id" value="${clientId}">
+              <input type="hidden" name="key" value="${r.key}">
+              <button type="submit" class="secondary">Elimina</button>
+            </form>
+          </td>
+        </tr>
+      `).join('');
+    }catch(e){
+      tbody.innerHTML = '<tr><td colspan="3" class="muted">Errore.</td></tr>';
+    }
+  }
+
+  // Pulsante "Carica"
+  document.getElementById('dm-load')?.addEventListener('click', ()=>{
+    const cid = document.getElementById('dm-client-id').value.trim();
+    if(cid) loadDmReplies(cid);
+  });
+
+  // (Opzionale) funzione che clients.js può chiamare quando clicchi un cliente
+  window.setSelectedClientForDmReplies = function(clientId){
+    document.getElementById('dm-client-id').value = clientId;
+    try{ loadDmReplies(clientId); }catch{}
+  };
+</script>
+
     </article>
   </main>
 

@@ -818,14 +818,15 @@ def ui2_js():
   }
   
   function headerLine(name){
-    return '<div class="headerline">'
-      + '<div class="title">'+esc(name||t('client'))+'</div>'
-      + '<div class="group">'
-      +   '<button id="refresh">'+t('refresh')+'</button>'
-      +   '<a href="/admin/ui" target="_blank"><button>'+t('adminClassic')+'</button></a>'
-      + '</div>'
-      + '</div>';
-  }
+  return '<div class="headerline">'
+  + '<div class="title">'+esc(name||t('client'))+'</div>'
+  + '<div class="group">'
+  +   '<button id="refresh">'+t('refresh')+'</button>'
+  +   '<button id="deleteClient" class="danger">Elimina cliente</button>'  // ← QUESTA È LA NUOVA RIGA
+  +   '<a href="/admin/ui" target="_blank"><button>'+t('adminClassic')+'</button></a>'
+  + '</div>'
+  + '</div>';
+}
   
   function renderDetail(ctx){
     var c=ctx.c, acc=ctx.acc, toks=ctx.toks, logs=ctx.logs, prompts=ctx.prompts, promptsErr=ctx.promptsErr;
@@ -907,6 +908,27 @@ def ui2_js():
       + '<div class="card"><h3>'+t('tokens')+'</h3>'+toksHtml+'</div>'
       + '<div class="card"><h3>'+t('logs')+'</h3>'+logsHtml+'</div>';
     var refresh=$('#refresh'); if(refresh){ refresh.onclick=function(){ select(c.id); }; }
+    var refresh=$('#refresh'); if(refresh){ refresh.onclick=function(){ select(c.id); }; }
+
+// ← AGGIUNGI QUESTE RIGHE QUI:
+var delBtn=$('#deleteClient');
+if(delBtn){
+  delBtn.onclick=function(){
+    var nome = (c.name||c.company||('#'+c.id));
+    if(!confirm('Eliminare il cliente "' + nome + '"? Operazione irreversibile!')){
+      return;
+    }
+    j('/admin/clients/'+c.id, {method:'DELETE'})
+      .then(function(){ 
+        window.location.href='/ui2?ok=deleted'; 
+      })
+      .catch(function(err){ 
+        alert('Errore eliminazione: '+err.message); 
+      });
+  };
+}
+
+var btnOn=$('#btnBotOn'), btnOff=$('#btnBotOff'), bots=$('#bots'), botchip=$('#botchip');
     var btnOn=$('#btnBotOn'), btnOff=$('#btnBotOff'), bots=$('#bots'), botchip=$('#botchip');
     function setBot(enabled){
       bots.textContent='…';
