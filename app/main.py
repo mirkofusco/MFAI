@@ -290,14 +290,14 @@ async def security_headers(request: Request, call_next):
         return await call_next(request)
     
     resp = await call_next(request)
-
-    # CSP: su /ui2* servono inline style/script per l'injection
+    
+    # CSP: su /ui2* e /meta/* servono inline style/script per l'injection
     path = request.url.path or ""
-    if path.startswith("/ui2"):
-        csp = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+    if path.startswith("/ui2") or path.startswith("/meta") or path.startswith("/login"):
+        csp = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:"
     else:
         csp = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:"
-
+    
     resp.headers.update(
         {
             "X-Frame-Options": "DENY",
