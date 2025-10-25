@@ -525,16 +525,95 @@ def admin_ui_bridge():
 @app.get("/ui2", response_class=HTMLResponse)
 def ui2_page():
     return """<!doctype html>
-<html lang="it">
+<html lang="en">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>MF.AI — Clienti</title>
+  <title>MF.AI — Clients</title>
   <link rel="stylesheet" href="/ui2.css">
 </head>
 <body>
+  <!-- Language Switcher -->
+  <div style="position:fixed;top:12px;right:12px;z-index:10000;display:flex;gap:6px;">
+    <button id="lang-it" class="lang-btn active" onclick="setLang('it')" title="Italiano">🇮🇹 IT</button>
+    <button id="lang-en" class="lang-btn" onclick="setLang('en')" title="English">🇬🇧 EN</button>
+  </div>
+  
   <div id="app"></div>
   <script src="/ui2.js" defer></script>
+  
+  <script>
+    // Language data
+    const LANG = {
+      it: {
+        title: 'MF.AI — Clienti',
+        loading: 'Carico clienti…',
+        noClient: 'Nessun cliente',
+        ready: 'Pronto',
+        clientsLabel: 'Clienti:',
+        refresh: 'Ricarica scheda',
+        adminClassic: 'Admin classico',
+        prompts: 'Prompt cliente (unico)',
+        tokens: 'Token',
+        logs: 'Ultimi log',
+        botOn: 'Attiva bot',
+        botOff: 'Disattiva bot',
+        save: 'Salva',
+        saved: 'Salvato',
+        error: 'Errore',
+        noToken: 'Nessun token per questo account.',
+        noLogs: 'Nessun log recente.',
+        promptPlaceholder: 'Scrivi qui il prompt completo...',
+        active: 'Attivo',
+        inactive: 'Disattivo',
+        on: 'ON',
+        off: 'OFF'
+      },
+      en: {
+        title: 'MF.AI — Clients',
+        loading: 'Loading clients…',
+        noClient: 'No client selected',
+        ready: 'Ready',
+        clientsLabel: 'Clients:',
+        refresh: 'Refresh card',
+        adminClassic: 'Classic Admin',
+        prompts: 'Client Prompt (single)',
+        tokens: 'Tokens',
+        logs: 'Recent logs',
+        botOn: 'Enable bot',
+        botOff: 'Disable bot',
+        save: 'Save',
+        saved: 'Saved',
+        error: 'Error',
+        noToken: 'No token for this account.',
+        noLogs: 'No recent logs.',
+        promptPlaceholder: 'Write the complete prompt here...',
+        active: 'Active',
+        inactive: 'Inactive',
+        on: 'ON',
+        off: 'OFF'
+      }
+    };
+    
+    let currentLang = localStorage.getItem('mfai_lang') || 'it';
+    
+    function setLang(lang) {
+      currentLang = lang;
+      localStorage.setItem('mfai_lang', lang);
+      document.querySelectorAll('.lang-btn').forEach(btn => btn.classList.remove('active'));
+      document.getElementById('lang-' + lang).classList.add('active');
+      
+      // Trigger re-render if app is loaded
+      if (window.reloadUI) window.reloadUI();
+    }
+    
+    function t(key) {
+      return LANG[currentLang][key] || key;
+    }
+    
+    // Set initial language
+    setLang(currentLang);
+  </script>
 </body>
 </html>"""
 
@@ -574,6 +653,9 @@ button:hover{filter:brightness(1.1)}
 .title{font-size:18px;font-weight:700}
 .log{font-family:ui-monospace,Menlo,Consolas;font-size:12px;background:#0c1222;border:1px solid #1b2442;border-radius:10px;padding:10px;white-space:pre-wrap;max-height:220px;overflow:auto}
 #app{display:grid;grid-template-columns:300px 1fr;height:100vh}
+.lang-btn{padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--btn);color:var(--text);cursor:pointer;font-size:12px;transition:all 0.2s}
+.lang-btn:hover{background:#1a2442;border-color:var(--accent)}
+.lang-btn.active{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
 """,
         media_type="text/css"
     )
@@ -581,6 +663,93 @@ button:hover{filter:brightness(1.1)}
 @app.get("/ui2.js")
 def ui2_js():
     JS = '''(function(){
+  // === TRANSLATION SYSTEM ===
+  var LANG = {
+    it: {
+      brand: 'MF.AI — Clienti',
+      searchPlaceholder: 'Cerca cliente…',
+      loading: 'Carico clienti…',
+      noClient: 'Nessun cliente',
+      selectClient: 'Seleziona un cliente dalla lista.',
+      loadingHint: 'Carico…',
+      clientsLabel: 'Clienti: ',
+      loadingCard: 'Carico scheda…',
+      ready: 'Pronto',
+      client: 'Cliente',
+      refresh: 'Ricarica scheda',
+      adminClassic: 'Admin classico',
+      adminClassicTitle: 'Apri l\\'Admin classico in una nuova scheda',
+      noResults: 'Nessun risultato',
+      bot: 'Bot',
+      active: 'Attivo',
+      inactive: 'Disattivo',
+      enableBot: 'Attiva bot',
+      disableBot: 'Disattiva bot',
+      noIGAccount: 'Nessun account IG collegato.',
+      promptTitle: 'Prompt cliente (unico)',
+      promptPlaceholder: 'Scrivi qui il prompt completo...',
+      save: 'Salva',
+      saved: 'Salvato',
+      error: 'Errore',
+      sectionDisabled: 'Sezione disabilitata',
+      endpointUnavailable: '/ui2/prompts/{client_id} non disponibile',
+      retry: 'Riprova',
+      tokens: 'Token',
+      noTokens: 'Nessun token per questo account.',
+      expires: 'scade',
+      logs: 'Ultimi log',
+      noLogs: 'Nessun log recente.',
+      status: 'Stato',
+      uiError: '⚠️ Errore UI'
+    },
+    en: {
+      brand: 'MF.AI — Clients',
+      searchPlaceholder: 'Search client…',
+      loading: 'Loading clients…',
+      noClient: 'No client selected',
+      selectClient: 'Select a client from the list.',
+      loadingHint: 'Loading…',
+      clientsLabel: 'Clients: ',
+      loadingCard: 'Loading card…',
+      ready: 'Ready',
+      client: 'Client',
+      refresh: 'Refresh card',
+      adminClassic: 'Classic Admin',
+      adminClassicTitle: 'Open Classic Admin in a new tab',
+      noResults: 'No results',
+      bot: 'Bot',
+      active: 'Active',
+      inactive: 'Inactive',
+      enableBot: 'Enable bot',
+      disableBot: 'Disable bot',
+      noIGAccount: 'No IG account connected.',
+      promptTitle: 'Client Prompt (single)',
+      promptPlaceholder: 'Write the complete prompt here...',
+      save: 'Save',
+      saved: 'Saved',
+      error: 'Error',
+      sectionDisabled: 'Section disabled',
+      endpointUnavailable: '/ui2/prompts/{client_id} unavailable',
+      retry: 'Retry',
+      tokens: 'Tokens',
+      noTokens: 'No tokens for this account.',
+      expires: 'expires',
+      logs: 'Recent logs',
+      noLogs: 'No recent logs.',
+      status: 'Status',
+      uiError: '⚠️ UI Error'
+    }
+  };
+  
+  var currentLang = localStorage.getItem('mfai_lang') || 'it';
+  function t(key) { return LANG[currentLang][key] || key; }
+  
+  window.reloadUI = function() {
+    currentLang = localStorage.getItem('mfai_lang') || 'it';
+    boot();
+  };
+  
+  // === ORIGINAL CODE (with translations) ===
   var api = {
     clients: '/admin/clients',
     accounts: '/admin/accounts',
@@ -595,32 +764,35 @@ def ui2_js():
   function repAll(str, find, repl){ return String(str).split(find).join(repl); }
   function j(u,o){ o=o||{}; o.credentials='include'; return fetch(u,o).then(function(r){ if(!r.ok) return r.text().then(function(t){ throw new Error('HTTP '+r.status+' '+r.statusText+' on '+u+'\\n'+t); }); return r.json(); }); }
   var root = document.getElementById('app');
-  root.innerHTML =
-    '<aside class="side">'
-    + '<div class="brand">MF.AI — Clienti</div>'
-    + '<div class="search"><input id="q" placeholder="Cerca cliente…"></div>'
-    + '<div id="list" class="list"><div class="card empty">Carico clienti…</div></div>'
-    + '</aside>'
-    + '<main class="main">'
-    + '  <div class="bar">'
-    + '    <div style="display:flex;align-items:center;gap:8px">'
-    + '      <div id="crumb" class="crumb">Nessun cliente</div>'
-    + '      <span id="hint" class="hint"></span>'
-    + '    </div>'
-    + '    <div><a href="/admin/ui" target="_blank"><button title="Apri l\\'Admin classico in una nuova scheda">Admin classico</button></a></div>'
-    + '  </div>'
-    + '  <div id="detail" class="content"><div class="card empty">Seleziona un cliente dalla lista.</div></div>'
-    + '</main>';
+  
   function boot(){
-    $('#hint').textContent = 'Carico…';
+    root.innerHTML =
+      '<aside class="side">'
+      + '<div class="brand">'+t('brand')+'</div>'
+      + '<div class="search"><input id="q" placeholder="'+t('searchPlaceholder')+'"></div>'
+      + '<div id="list" class="list"><div class="card empty">'+t('loading')+'</div></div>'
+      + '</aside>'
+      + '<main class="main">'
+      + '  <div class="bar">'
+      + '    <div style="display:flex;align-items:center;gap:8px">'
+      + '      <div id="crumb" class="crumb">'+t('noClient')+'</div>'
+      + '      <span id="hint" class="hint"></span>'
+      + '    </div>'
+      + '    <div><a href="/admin/ui" target="_blank"><button title="'+t('adminClassicTitle')+'">'+t('adminClassic')+'</button></a></div>'
+      + '  </div>'
+      + '  <div id="detail" class="content"><div class="card empty">'+t('selectClient')+'</div></div>'
+      + '</main>';
+    
+    $('#hint').textContent = t('loadingHint');
     Promise.all([ j(api.clients), j(api.accounts), j(api.tokens).catch(function(){ return []; }) ])
     .then(function(arr){
       state.clients=arr[0]; state.accounts=arr[1]; state.tokens=arr[2];
       renderList();
-      $('#hint').textContent = 'Clienti: '+state.clients.length;
+      $('#hint').textContent = t('clientsLabel')+state.clients.length;
       $('#q').addEventListener('input', function(e){ renderList(e.target.value); });
     }).catch(function(err){ showFatal(err); console.error(err); });
   }
+  
   function renderList(f){
     f=f||''; var box=$('#list'); box.innerHTML='';
     var q=String(f).trim().toLowerCase();
@@ -634,19 +806,20 @@ def ui2_js():
       var username = acc ? '@'+esc(acc.username) : '—';
       var botEnabled = (acc && acc.bot_enabled) ? 'ON' : 'OFF';
       el.className = 'item' + (state.selected===c.id?' active':'');
-      el.innerHTML = '<h4>' + esc(c.name||c.company||('Cliente #'+c.id)) + '</h4>'
-                   + '<div class="meta">' + username + ' · Bot ' + botEnabled + '</div>';
+      el.innerHTML = '<h4>' + esc(c.name||c.company||(t('client')+' #'+c.id)) + '</h4>'
+                   + '<div class="meta">' + username + ' · '+t('bot')+' ' + botEnabled + '</div>';
       el.onclick = function(){ select(c.id); };
       box.appendChild(el);
     });
-    if(items.length===0) box.innerHTML='<div class="card empty">Nessun risultato</div>';
+    if(items.length===0) box.innerHTML='<div class="card empty">'+t('noResults')+'</div>';
   }
+  
   function select(clientId){
     state.selected=clientId; renderList($('#q').value||'');
     var c = state.clients.find(function(x){ return x.id===clientId; });
     var acc = state.accounts.find(function(x){ return x.client_id===clientId; });
-    $('#crumb').textContent = (c && (c.name||c.company)) ? (c.name||c.company) : ('Cliente #'+clientId);
-    $('#hint').textContent='Carico scheda…';
+    $('#crumb').textContent = (c && (c.name||c.company)) ? (c.name||c.company) : (t('client')+' #'+clientId);
+    $('#hint').textContent=t('loadingCard');
     var prompts=null, promptsErr=null, logs=[];
     j(api.prompts(clientId)).then(function(p){ prompts=p; })
       .catch(function(e){ promptsErr=String(e); })
@@ -654,69 +827,71 @@ def ui2_js():
       .then(function(){
         var toks=[]; if(acc){ for(var i=0;i<state.tokens.length;i++){ if(state.tokens[i].ig_account_id===acc.id) toks.push(state.tokens[i]); } }
         renderDetail({c:c,acc:acc,toks:toks,logs:logs,prompts:prompts,promptsErr:promptsErr});
-        $('#hint').textContent='Pronto';
+        $('#hint').textContent=t('ready');
       })
       .catch(function(err){ showFatal(err); console.error(err); });
   }
+  
   function headerLine(name){
     return '<div class="headerline">'
-      + '<div class="title">'+esc(name||'Cliente')+'</div>'
+      + '<div class="title">'+esc(name||t('client'))+'</div>'
       + '<div class="group">'
-      +   '<button id="refresh">Ricarica scheda</button>'
-      +   '<a href="/admin/ui" target="_blank"><button>Admin classico</button></a>'
+      +   '<button id="refresh">'+t('refresh')+'</button>'
+      +   '<a href="/admin/ui" target="_blank"><button>'+t('adminClassic')+'</button></a>'
       + '</div>'
       + '</div>';
   }
+  
   function renderDetail(ctx){
     var c=ctx.c, acc=ctx.acc, toks=ctx.toks, logs=ctx.logs, prompts=ctx.prompts, promptsErr=ctx.promptsErr;
     var d=document.getElementById('detail');
-    var statusChip = (acc && acc.active) ? '<span class="chip ok">Attivo</span>' : '<span class="chip bad">Disattivo</span>';
+    var statusChip = (acc && acc.active) ? '<span class="chip ok">'+t('active')+'</span>' : '<span class="chip bad">'+t('inactive')+'</span>';
     var botChip = (acc && acc.bot_enabled) ? '<span id="botchip" class="chip ok">ON</span>' : '<span id="botchip" class="chip bad">OFF</span>';
     var botButtons = acc
       ? '<div class="group" id="botButtons">'
-          + '<button id="btnBotOn"  class="primary">Attiva bot</button>'
-          + '<button id="btnBotOff" class="danger">Disattiva bot</button>'
+          + '<button id="btnBotOn"  class="primary">'+t('enableBot')+'</button>'
+          + '<button id="btnBotOff" class="danger">'+t('disableBot')+'</button>'
           + botChip
           + '<span id="bots" class="hint"></span>'
         + '</div>'
-      : '<span class="hint">Nessun account IG collegato.</span>';
+      : '<span class="hint">'+t('noIGAccount')+'</span>';
     var promptsCard='';
     if(prompts){
       var val = prompts.system || '';
       val = repAll(repAll(val,'<','&lt;'),'>','&gt;');
       promptsCard =
         '<div class="card">'
-        + '<h3>Prompt cliente (unico)</h3>'
-        + '<div class="row"><textarea id="system" rows="8" placeholder="Scrivi qui il prompt completo...">'+val+'</textarea></div>'
+        + '<h3>'+t('promptTitle')+'</h3>'
+        + '<div class="row"><textarea id="system" rows="8" placeholder="'+t('promptPlaceholder')+'">'+val+'</textarea></div>'
         + '<div class="row" style="justify-content:flex-end">'
         +   '<span id="ps" class="hint" style="margin-right:8px"></span>'
-        +   '<button id="savep" class="primary">Salva</button>'
+        +   '<button id="savep" class="primary">'+t('save')+'</button>'
         + '</div>'
         + '</div>';
     } else {
-      var info = promptsErr ? String(promptsErr).split('\\n')[0] : 'endpoint non raggiungibile';
+      var info = promptsErr ? String(promptsErr).split('\\n')[0] : t('endpointUnavailable');
       promptsCard =
         '<div class="card">'
-        + '<h3>Prompt cliente (unico)</h3>'
+        + '<h3>'+t('promptTitle')+'</h3>'
         + '<div class="row">'
-        +   '<span class="chip neutral">Sezione disabilitata</span>'
-        +   '<span class="hint">/ui2/prompts/{client_id} non disponibile ('+esc(info)+').</span>'
+        +   '<span class="chip neutral">'+t('sectionDisabled')+'</span>'
+        +   '<span class="hint">'+esc(info)+'</span>'
         + '</div>'
-        + '<div class="row"><button id="retryPrompts">Riprova</button>'
-        + '<a href="/admin/ui" target="_blank"><button>Admin classico</button></a></div>'
+        + '<div class="row"><button id="retryPrompts">'+t('retry')+'</button>'
+        + '<a href="/admin/ui" target="_blank"><button>'+t('adminClassic')+'</button></a></div>'
         + '</div>';
     }
     var toksHtml = '';
     if(toks && toks.length){
       var lines = [];
       for(var i=0;i<toks.length;i++){
-        var t=toks[i];
-        var when = t.expires_at ? new Date(t.expires_at).toLocaleString() : '—';
-        lines.push('• ' + (t.long_lived?'LLT':'SLT') + ' | scade: ' + when + ' | active=' + t.active);
+        var t_tok=toks[i];
+        var when = t_tok.expires_at ? new Date(t_tok.expires_at).toLocaleString() : '—';
+        lines.push('• ' + (t_tok.long_lived?'LLT':'SLT') + ' | '+t('expires')+': ' + when + ' | active=' + t_tok.active);
       }
       toksHtml = '<div class="log">'+esc(lines.join('\\n'))+'</div>';
     } else {
-      toksHtml = '<div class="meta">Nessun token per questo account.</div>';
+      toksHtml = '<div class="meta">'+t('noTokens')+'</div>';
     }
     var logsHtml = '';
     if(logs && logs.length){
@@ -730,22 +905,22 @@ def ui2_js():
       }
       logsHtml = '<div class="log">'+esc(L.join('\\n'))+'</div>';
     } else {
-      logsHtml = '<div class="meta">Nessun log recente.</div>';
+      logsHtml = '<div class="meta">'+t('noLogs')+'</div>';
     }
     d.innerHTML =
       '<div class="card">'
-      +   headerLine((c && (c.name||c.company)) ? (c.name||c.company) : ('Cliente #'+c.id))
+      +   headerLine((c && (c.name||c.company)) ? (c.name||c.company) : (t('client')+' #'+c.id))
       +   '<div class="row">'
       +     '<div class="kv"><b>Client ID</b> '+String(c.id)+'</div>'
       +     '<div class="kv"><b>IG</b> '+(acc?('@'+esc(acc.username)):'—')+'</div>'
       +     '<div class="kv"><b>IG_USER_ID</b> '+(acc?esc(acc.ig_user_id):'—')+'</div>'
-      +     '<div class="kv"><b>Stato</b> '+statusChip+'</div>'
+      +     '<div class="kv"><b>'+t('status')+'</b> '+statusChip+'</div>'
       +   '</div>'
       +   '<div class="row">'+botButtons+'</div>'
       + '</div>'
       + promptsCard
-      + '<div class="card"><h3>Token</h3>'+toksHtml+'</div>'
-      + '<div class="card"><h3>Ultimi log</h3>'+logsHtml+'</div>';
+      + '<div class="card"><h3>'+t('tokens')+'</h3>'+toksHtml+'</div>'
+      + '<div class="card"><h3>'+t('logs')+'</h3>'+logsHtml+'</div>';
     var refresh=$('#refresh'); if(refresh){ refresh.onclick=function(){ select(c.id); }; }
     var btnOn=$('#btnBotOn'), btnOff=$('#btnBotOff'), bots=$('#bots'), botchip=$('#botchip');
     function setBot(enabled){
@@ -757,11 +932,11 @@ def ui2_js():
       }).then(function(){
         botchip.textContent = enabled ? 'ON' : 'OFF';
         botchip.className = 'chip ' + (enabled ? 'ok' : 'bad');
-        bots.textContent='Salvato';
+        bots.textContent=t('saved');
         for(var i=0;i<state.accounts.length;i++){
           if(state.accounts[i].id===acc.id){ state.accounts[i].bot_enabled = enabled; break; }
         }
-      }).catch(function(){ bots.textContent='Errore'; });
+      }).catch(function(){ bots.textContent=t('error'); });
     }
     if(btnOn && btnOff && acc){ btnOn.onclick=function(){ setBot(true); }; btnOff.onclick=function(){ setBot(false); }; }
     var savep=$('#savep'), ps=$('#ps');
@@ -773,18 +948,20 @@ def ui2_js():
           credentials:'include',
           headers:{'Content-Type':'application/json'},
           body:JSON.stringify({ system: $('#system').value })
-        }).then(function(){ ps.textContent='Salvato'; })
-          .catch(function(){ ps.textContent='Errore'; });
+        }).then(function(){ ps.textContent=t('saved'); })
+          .catch(function(){ ps.textContent=t('error'); });
       };
     }
     var retry=$('#retryPrompts'); if(retry){ retry.onclick=function(){ select(c.id); }; }
   }
+  
   function showFatal(msg){
     var app=document.getElementById('app');
-    app.innerHTML='<div style="padding:20px;font-family:system-ui"><h2>⚠️ Errore UI</h2>'
+    app.innerHTML='<div style="padding:20px;font-family:system-ui"><h2>'+t('uiError')+'</h2>'
       + '<pre style="white-space:pre-wrap;background:#111;color:#eee;padding:12px;border-radius:8px;border:1px solid #333;max-height:50vh;overflow:auto">'
       + esc(String(msg)) + '</pre></div>';
   }
+  
   try { boot(); } catch (e) { showFatal(e); console.error(e); }
 })();'''
     return Response(JS, media_type="application/javascript")
