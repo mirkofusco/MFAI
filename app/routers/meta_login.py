@@ -172,22 +172,58 @@ async def meta_callback(request: Request):
         "page_access_token": page_access_token,
     }))
 
-    return HTMLResponse(f"""
+  return HTMLResponse(f"""
     <html><body style="font-family:system-ui;max-width:920px;margin:30px auto;">
-      <h2>Meta Login — Success</h2>
-      <p>Tokens and IG account retrieved. This is visible in the screencast.</p>
+      <h2>✅ Instagram Account Connected Successfully</h2>
+      <p><strong>Connection successful!</strong> MF.AI has retrieved your Instagram Business account information.</p>
+      <p>Below you can see the details of your connected account. Enter your business name and click "Save token to MF.AI" to complete the setup.</p>
+      
       <h3>Summary</h3>
       <pre>{h(json.dumps(summary, indent=2))}</pre>
-      <form method="post" action="/meta/save" style="margin-top:18px;">
+      
+      <form method="post" action="/meta/save" style="margin-top:24px;">
         <input type="hidden" name="payload_json" value='{payload_hidden}' />
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <input type="text" name="client_name" placeholder="Client name (optional)" style="padding:8px;border-radius:8px;border:1px solid #ccc;">
-          <input type="email" name="client_email" placeholder="Client email (optional)" style="padding:8px;border-radius:8px;border:1px solid #ccc;">
-          <button style="padding:10px 16px;font-size:16px">Save token to MF.AI</button>
+        
+        <div style="display:flex;flex-direction:column;gap:16px;max-width:600px;">
+          
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            <label style="font-weight:600;font-size:14px;color:#333;">Business Name *</label>
+            <input type="text" 
+                   name="client_name" 
+                   placeholder="e.g. My Business" 
+                   required
+                   value="{h(ig_username or '')}"
+                   style="padding:10px 12px;border-radius:8px;border:1px solid #ccc;font-size:14px;width:100%;">
+            <small style="color:#666;font-size:12px;">This name will appear in the MF.AI dashboard</small>
+          </div>
+          
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            <label style="font-weight:600;font-size:14px;color:#333;">Email (optional)</label>
+            <input type="email" 
+                   name="client_email" 
+                   placeholder="contact@business.com" 
+                   style="padding:10px 12px;border-radius:8px;border:1px solid #ccc;font-size:14px;width:100%;">
+          </div>
+          
+          <button type="submit"
+                  style="padding:12px 20px;font-size:16px;background:#10a37f;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:600;margin-top:8px;"
+                  title="This will store the Instagram Business token in MF.AI database to enable automated DM replies">
+            💾 Save Token to MF.AI Database
+          </button>
         </div>
       </form>
-      <p style="color:#666">The Save action will persist the Page token via the internal /save-token API.</p>
-      <p style="margin-top:16px"><a href="/ui2" style="text-decoration:none"><button style="padding:8px 12px">Back to Admin</button></a></p>
+      
+      <p style="color:#666;margin-top:20px;font-size:14px;">
+        The Save action will persist the Page Access Token in MF.AI database to enable automated Instagram DM replies.
+      </p>
+      
+      <p style="margin-top:16px;">
+        <a href="/ui2" style="text-decoration:none">
+          <button style="padding:8px 16px;background:#f0f0f0;border:1px solid #ccc;border-radius:8px;cursor:pointer;">
+            ← Back to Admin Dashboard
+          </button>
+        </a>
+      </p>
     </body></html>
     """)
 
