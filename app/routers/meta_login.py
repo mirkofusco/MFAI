@@ -47,20 +47,127 @@ async def meta_login():
 
     params = {
         "client_id": META_APP_ID,
-        "redirect_uri": REDIRECT_URI,              # verrà URL-encodata da urlencode
+        "redirect_uri": REDIRECT_URI,
         "scope": ",".join(SCOPES),
-        "state": "mfai_login_state",               # semplice anti-CSRF demo
+        "state": "mfai_login_state",
     }
     login_url = f"https://www.facebook.com/{GRAPH_VER}/dialog/oauth?{urlencode(params)}"
 
     return HTMLResponse(f"""
-    <html><body style="font-family:system-ui;max-width:760px;margin:40px auto;">
-      <h1>MF.AI — Connect with Meta</h1>
-      <p>This starts the end-to-end authorization flow required for review.</p>
-      <a href="{h(login_url)}">
-        <button style="padding:10px 16px;font-size:16px">Continue with Facebook</button>
-      </a>
-    </body></html>
+    <!DOCTYPE html>
+    <html lang="it">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>MF.AI — Connetti Instagram</title>
+        <style>
+            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+            body {{
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 20px;
+            }}
+            .container {{
+                background: white;
+                border-radius: 20px;
+                padding: 48px 40px;
+                max-width: 480px;
+                width: 100%;
+                box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                text-align: center;
+            }}
+            .logo {{
+                width: 120px;
+                height: 120px;
+                margin: 0 auto 24px;
+                border-radius: 30px;
+                object-fit: contain;
+                box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
+            }}
+            h1 {{
+                font-size: 28px;
+                color: #1a1a1a;
+                margin-bottom: 12px;
+                font-weight: 700;
+            }}
+            p {{
+                color: #666;
+                font-size: 16px;
+                line-height: 1.6;
+                margin-bottom: 32px;
+            }}
+            .btn {{
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                border: none;
+                padding: 16px 32px;
+                font-size: 16px;
+                font-weight: 600;
+                border-radius: 12px;
+                cursor: pointer;
+                text-decoration: none;
+                display: inline-block;
+                transition: transform 0.2s, box-shadow 0.2s;
+                box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+            }}
+            .btn:hover {{
+                transform: translateY(-2px);
+                box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+            }}
+            .btn:active {{
+                transform: translateY(0);
+            }}
+            .features {{
+                margin-top: 32px;
+                padding-top: 32px;
+                border-top: 1px solid #e0e0e0;
+                text-align: left;
+            }}
+            .feature {{
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                margin-bottom: 16px;
+                color: #555;
+                font-size: 14px;
+            }}
+            .feature::before {{
+                content: "✓";
+                background: #667eea;
+                color: white;
+                width: 24px;
+                height: 24px;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-weight: bold;
+                flex-shrink: 0;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <img src="https://soluzionidigitali.roma.it/mfai.png" alt="MF.AI Logo" class="logo">
+            <h1>Connetti Instagram</h1>
+            <p>Autorizza MF.AI ad accedere al tuo account Instagram Business per automatizzare le risposte ai messaggi.</p>
+            
+            <a href="{h(login_url)}" class="btn">
+                Continua con Facebook
+            </a>
+            
+            <div class="features">
+                <div class="feature">Risposte automatiche ai DM</div>
+                <div class="feature">Gestione commenti intelligente</div>
+                <div class="feature">Dashboard di monitoraggio</div>
+            </div>
+        </div>
+    </body>
+    </html>
     """)
 
 @router.get("/meta/callback", response_class=HTMLResponse)
@@ -173,22 +280,153 @@ async def meta_callback(request: Request):
     }))
 
     return HTMLResponse(f"""
-    <html><body style="font-family:system-ui;max-width:920px;margin:30px auto;">
-      <h2>Meta Login — Success</h2>
-      <p>Tokens and IG account retrieved. This is visible in the screencast.</p>
-      <h3>Summary</h3>
-      <pre>{h(json.dumps(summary, indent=2))}</pre>
-      <form method="post" action="/meta/save" style="margin-top:18px;">
-        <input type="hidden" name="payload_json" value='{payload_hidden}' />
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <input type="text" name="client_name" placeholder="Client name (optional)" style="padding:8px;border-radius:8px;border:1px solid #ccc;">
-          <input type="email" name="client_email" placeholder="Client email (optional)" style="padding:8px;border-radius:8px;border:1px solid #ccc;">
-          <button style="padding:10px 16px;font-size:16px">Save token to MF.AI</button>
+    <!DOCTYPE html>
+    <html lang="it">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>MF.AI — Connessione riuscita</title>
+        <style>
+            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+            body {{
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh;
+                padding: 20px;
+            }}
+            .container {{
+                max-width: 920px;
+                margin: 40px auto;
+                background: white;
+                border-radius: 20px;
+                padding: 40px;
+                box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            }}
+            .header {{
+                text-align: center;
+                margin-bottom: 32px;
+            }}
+            .logo-small {{
+                width: 60px;
+                height: 60px;
+                margin: 0 auto 16px;
+                display: block;
+                border-radius: 12px;
+            }}
+            .success-icon {{
+                width: 80px;
+                height: 80px;
+                background: #10b981;
+                border-radius: 50%;
+                margin: 0 auto 24px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 40px;
+                color: white;
+            }}
+            h2 {{
+                text-align: center;
+                color: #1a1a1a;
+                margin-bottom: 16px;
+                font-size: 28px;
+            }}
+            .summary {{
+                background: #f8f9fa;
+                border-radius: 12px;
+                padding: 20px;
+                margin: 24px 0;
+                font-family: 'Monaco', 'Courier New', monospace;
+                font-size: 13px;
+                overflow-x: auto;
+            }}
+            .form-section {{
+                margin: 32px 0;
+                padding: 24px;
+                background: #f8f9fa;
+                border-radius: 12px;
+            }}
+            .form-section h3 {{
+                margin-bottom: 16px;
+                color: #1a1a1a;
+            }}
+            .input-group {{
+                display: flex;
+                gap: 12px;
+                flex-wrap: wrap;
+                margin-bottom: 16px;
+            }}
+            input[type="text"],
+            input[type="email"] {{
+                flex: 1;
+                min-width: 200px;
+                padding: 12px 16px;
+                border: 2px solid #e0e0e0;
+                border-radius: 10px;
+                font-size: 14px;
+                transition: border-color 0.2s;
+            }}
+            input:focus {{
+                outline: none;
+                border-color: #667eea;
+            }}
+            .btn {{
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                border: none;
+                padding: 14px 28px;
+                font-size: 16px;
+                font-weight: 600;
+                border-radius: 10px;
+                cursor: pointer;
+                transition: transform 0.2s;
+            }}
+            .btn:hover {{
+                transform: translateY(-2px);
+            }}
+            .btn-secondary {{
+                background: #6b7280;
+                margin-left: 12px;
+            }}
+            .note {{
+                color: #666;
+                font-size: 14px;
+                margin-top: 16px;
+                text-align: center;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <img src="https://soluzionidigitali.roma.it/mfai.png" alt="MF.AI Logo" class="logo-small">
+                <div class="success-icon">✓</div>
+                <h2>Connessione riuscita!</h2>
+                <p style="color:#666;">
+                    Token e account Instagram recuperati correttamente.
+                </p>
+            </div>
+
+            <h3 style="margin-bottom:12px;">Riepilogo</h3>
+            <pre class="summary">{h(json.dumps(summary, indent=2))}</pre>
+
+            <form method="post" action="/meta/save" class="form-section">
+                <h3>Salva il token in MF.AI</h3>
+                <input type="hidden" name="payload_json" value='{payload_hidden}' />
+                <div class="input-group">
+                    <input type="text" name="client_name" placeholder="Nome cliente *" required>
+                    <input type="email" name="client_email" placeholder="Email cliente (opzionale)">
+                </div>
+                <button type="submit" class="btn">Salva token</button>
+                <a href="/ui2"><button type="button" class="btn btn-secondary">Torna alla dashboard</button></a>
+            </form>
+
+            <p class="note">
+                Il token verrà salvato in modo sicuro nel database.
+            </p>
         </div>
-      </form>
-      <p style="color:#666">The Save action will persist the Page token via the internal /save-token API.</p>
-      <p style="margin-top:16px"><a href="/ui2" style="text-decoration:none"><button style="padding:8px 12px">Back to Admin</button></a></p>
-    </body></html>
+    </body>
+    </html>
     """)
 
 @router.post("/meta/save", response_class=HTMLResponse)
