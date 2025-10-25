@@ -534,7 +534,13 @@ def ui2_page():
 </head>
 <body>
   <!-- Language Switcher -->
-  <div style="position:fixed;top:12px;right:12px;z-index:10000;display:flex;gap:6px;">
+  <!-- Top Bar: Language + Connect -->
+  <div style="position:fixed;top:12px;right:12px;z-index:10000;display:flex;gap:8px;align-items:center;">
+    <a href="/meta/login" style="text-decoration:none">
+      <button class="connect-btn" title="Connect Instagram Business Account via Meta Login">
+        🔗 Connect with Meta
+      </button>
+    </a>
     <button id="lang-it" class="lang-btn active" onclick="setLang('it')" title="Italiano">🇮🇹 IT</button>
     <button id="lang-en" class="lang-btn" onclick="setLang('en')" title="English">🇬🇧 EN</button>
   </div>
@@ -543,6 +549,25 @@ def ui2_page():
   <script src="/ui2.js" defer></script>
   
   <script>
+  <style>
+    .connect-btn {
+      padding: 8px 14px;
+      border-radius: 8px;
+      background: #1877f2;
+      color: white;
+      border: none;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      transition: all 0.2s;
+      box-shadow: 0 2px 8px rgba(24, 119, 242, 0.3);
+    }
+    .connect-btn:hover {
+      background: #166fe5;
+      box-shadow: 0 4px 12px rgba(24, 119, 242, 0.4);
+      transform: translateY(-1px);
+    }
+  </style>
     // Language data
     const LANG = {
       it: {
