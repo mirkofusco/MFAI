@@ -569,7 +569,7 @@ def ui2_page():
     // Language data
     window.LANG = {
   it: {
-    brand: 'MF.AI — Clienti',
+    brand: '<img src="https://soluzionidigitali.roma.it/mfai.png" alt="MF.AI" class="brand-logo">MF.AI — Clienti',
     searchPlaceholder: 'Cerca cliente…',
     loading: 'Carico clienti…',
     noClient: 'Nessun cliente',
@@ -684,8 +684,8 @@ def ui2_css():
 *{box-sizing:border-box}html,body{height:100%}body{margin:0;background:var(--bg);color:var(--text);font:14px system-ui,Segoe UI,Roboto}
 .app{display:grid;grid-template-columns:300px 1fr;height:100vh}
 .side{border-right:1px solid var(--border);background:var(--panel);display:flex;flex-direction:column}
-.brand{padding:14px 12px;border-bottom:1px solid var(--border);font-weight:700}
-.search{padding:10px 12px}.search input{width:100%;padding:10px;border-radius:10px;border:1px solid var(--border);background:#0d1322;color:var(--text)}
+.brand{padding:14px 12px;border-bottom:1px solid var(--border);font-weight:700;display:flex;align-items:center;gap:10px}
+.brand-logo{width:32px;height:32px;border-radius:8px;object-fit:contain}.search{padding:10px 12px}.search input{width:100%;padding:10px;border-radius:10px;border:1px solid var(--border);background:#0d1322;color:var(--text)}
 .list{overflow:auto;padding:8px}
 .item{padding:10px;border-radius:10px;cursor:pointer;margin:6px 4px}
 .item:hover{background:#0e162c}.item.active{outline:1px solid var(--accent);background:#0e1a33}
