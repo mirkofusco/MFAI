@@ -535,14 +535,15 @@ def ui2_page():
 <body>
   <!-- Language Switcher -->
   <!-- Top Bar: Language + Connect -->
-  <div style="position:fixed;top:12px;right:12px;z-index:10000;display:flex;gap:8px;align-items:center;">
-    <a href="/meta/login" style="text-decoration:none">
-      <button class="connect-btn" title="Connect Instagram Business Account via Meta Login">
+ <!-- Top Bar: Language + Connect -->
+  <div style="position:fixed;top:12px;right:12px;z-index:10000;display:flex;gap:8px;align-items:center;pointer-events:auto;">
+    <a href="/meta/login" style="text-decoration:none;pointer-events:auto;">
+      <button class="connect-btn" title="Connect Instagram Business Account via Meta Login" style="pointer-events:auto;">
         🔗 Connect with Meta
       </button>
     </a>
-    <button id="lang-it" class="lang-btn active" onclick="setLang('it')" title="Italiano">🇮🇹 IT</button>
-    <button id="lang-en" class="lang-btn" onclick="setLang('en')" title="English">🇬🇧 EN</button>
+    <button id="lang-it" class="lang-btn active" onclick="setLang('it')" title="Italiano" style="pointer-events:auto;">🇮🇹 IT</button>
+    <button id="lang-en" class="lang-btn" onclick="setLang('en')" title="English" style="pointer-events:auto;">🇬🇧 EN</button>
   </div>
   
   <div id="app"></div>
